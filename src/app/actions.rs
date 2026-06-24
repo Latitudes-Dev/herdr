@@ -1483,6 +1483,44 @@ impl AppState {
         }
     }
 
+    /// Close the workspace at `index` without disturbing the workspace the user
+    /// is currently on, unless that active workspace is the one being closed.
+    ///
+    /// `close_selected_workspace` always re-activates whatever workspace ends up
+    /// at the (clamped) `selected` index, which is correct for interactive close
+    /// (the user is looking at the workspace they're closing). But programmatic
+    /// callers — `workspace close` / `worktree remove` over the API — point
+    /// `selected` at their victim first, so without this guard a background
+    /// teardown yanks the user's focus away from whatever they were typing in.
+    ///
+    /// We capture the active workspace by id (indices shift on removal), close,
+    /// then restore focus to it if it survived. If the active workspace was the
+    /// victim (or was swept up in a worktree-group close), its id is gone and we
+    /// keep `close_selected_workspace`'s reassignment.
+    pub fn close_workspace_preserving_focus(&mut self, index: usize) {
+        let active_id = self
+            .active
+            .and_then(|idx| self.workspaces.get(idx))
+            .map(|ws| ws.id.clone());
+        let closing_active = self.active == Some(index);
+
+        self.selected = index;
+        self.close_selected_workspace();
+
+        if closing_active {
+            return;
+        }
+        if let Some(active_id) = active_id {
+            if let Some(new_idx) = self.workspaces.iter().position(|ws| ws.id == active_id) {
+                self.selected = new_idx;
+                self.active = Some(new_idx);
+                self.ensure_workspace_visible(new_idx);
+                self.tab_scroll_follow_active = true;
+                self.refresh_tab_bar_view();
+            }
+        }
+    }
+
     pub(crate) fn refresh_tab_bar_view(&mut self) {
         let area = self.view.tab_bar_rect;
         let Some(ws) = self.active.and_then(|idx| self.workspaces.get(idx)) else {

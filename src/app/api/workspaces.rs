@@ -172,8 +172,7 @@ impl App {
                     .collect::<Vec<_>>()
             })
             .unwrap_or_default();
-        self.state.selected = index;
-        self.state.close_selected_workspace();
+        self.state.close_workspace_preserving_focus(index);
         for pane_id in pane_ids {
             self.state.plugin_panes.remove(&pane_id);
         }
@@ -280,6 +279,65 @@ mod tests {
                         .is_some_and(|worktree| worktree.is_linked_worktree)
             )
         }));
+    }
+
+    fn app_with_workspaces(n: usize) -> App {
+        let (_api_tx, api_rx) = tokio::sync::mpsc::unbounded_channel();
+        let mut app = App::new(
+            &Config::default(),
+            true,
+            None,
+            api_rx,
+            crate::api::EventHub::default(),
+        );
+        app.state.workspaces = (0..n)
+            .map(|i| Workspace::test_new(&format!("ws{i}")))
+            .collect();
+        app
+    }
+
+    #[test]
+    fn api_workspace_close_preserves_focus_on_other_workspace() {
+        let mut app = app_with_workspaces(3);
+        app.state.active = Some(2);
+        app.state.selected = 2;
+        let active_id = app.state.workspaces[2].id.clone();
+        let victim_id = app.state.workspaces[0].id.clone();
+
+        let response = app.handle_workspace_close(
+            "req".into(),
+            WorkspaceTarget {
+                workspace_id: victim_id,
+            },
+        );
+
+        let success: SuccessResponse = serde_json::from_str(&response).unwrap();
+        assert_eq!(success.id, "req");
+        assert_eq!(app.state.workspaces.len(), 2);
+        let active_idx = app.state.active.expect("active workspace");
+        assert_eq!(app.state.workspaces[active_idx].id, active_id);
+        assert_eq!(app.state.selected, active_idx);
+    }
+
+    #[test]
+    fn api_workspace_close_reassigns_when_closing_active() {
+        let mut app = app_with_workspaces(3);
+        app.state.active = Some(1);
+        app.state.selected = 1;
+        let victim_id = app.state.workspaces[1].id.clone();
+
+        let response = app.handle_workspace_close(
+            "req".into(),
+            WorkspaceTarget {
+                workspace_id: victim_id.clone(),
+            },
+        );
+
+        let success: SuccessResponse = serde_json::from_str(&response).unwrap();
+        assert_eq!(success.id, "req");
+        assert_eq!(app.state.workspaces.len(), 2);
+        let active_idx = app.state.active.expect("active workspace");
+        assert_ne!(app.state.workspaces[active_idx].id, victim_id);
     }
 
     #[test]
