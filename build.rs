@@ -29,6 +29,41 @@ fn env_bool(name: &str) -> Option<bool> {
     }
 }
 
+/// Resolve the build commit and expose it to the crate as `HERDR_BUILD_COMMIT`.
+///
+/// Honors an explicit `HERDR_BUILD_COMMIT` from the environment (set by release
+/// CI). Otherwise falls back to the current git short SHA so local builds — and
+/// in particular fork builds — self-report their commit via `herdr --version`
+/// and `herdr status`. Builds outside a git checkout (e.g. packaged source
+/// tarballs) simply leave the value empty, which `build_info` treats as absent.
+fn emit_build_commit(manifest_dir: &PathBuf) {
+    if env::var("HERDR_BUILD_COMMIT").map(|v| !v.trim().is_empty()) == Ok(true) {
+        // Respect an explicitly provided commit; nothing to derive.
+        return;
+    }
+
+    // Rebuild when the checked-out commit changes.
+    let git_dir = manifest_dir.join(".git");
+    println!("cargo:rerun-if-changed={}", git_dir.join("HEAD").display());
+    println!(
+        "cargo:rerun-if-changed={}",
+        git_dir.join("refs/heads").display()
+    );
+
+    let commit = Command::new("git")
+        .args(["rev-parse", "--short=12", "HEAD"])
+        .current_dir(manifest_dir)
+        .output()
+        .ok()
+        .filter(|out| out.status.success())
+        .map(|out| String::from_utf8_lossy(&out.stdout).trim().to_string())
+        .filter(|s| !s.is_empty());
+
+    if let Some(commit) = commit {
+        println!("cargo:rustc-env=HERDR_BUILD_COMMIT={commit}");
+    }
+}
+
 fn main() {
     println!("cargo:rerun-if-changed=build.rs");
     println!("cargo:rerun-if-changed=vendor/libghostty-vt.vendor.json");
@@ -45,6 +80,10 @@ fn main() {
     println!("cargo:rerun-if-env-changed=HERDR_BUILD_ID");
     println!("cargo:rerun-if-env-changed=HERDR_BUILD_COMMIT");
     println!("cargo:rerun-if-env-changed=ZIG");
+
+    emit_build_commit(&PathBuf::from(
+        env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR"),
+    ));
 
     let manifest_dir = PathBuf::from(env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR"));
     let vendored_dir = manifest_dir.join("vendor/libghostty-vt");

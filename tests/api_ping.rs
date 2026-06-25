@@ -284,6 +284,15 @@ fn event_by_kind<'a>(events: &'a [serde_json::Value], kind: &str) -> &'a serde_j
         .unwrap_or_else(|| panic!("missing event {kind}"))
 }
 
+fn expected_build_version() -> String {
+    match option_env!("HERDR_BUILD_COMMIT") {
+        Some(commit) if !commit.trim().is_empty() => {
+            format!("{}+{}", env!("CARGO_PKG_VERSION"), commit.trim())
+        }
+        _ => env!("CARGO_PKG_VERSION").to_string(),
+    }
+}
+
 #[test]
 fn ping_over_socket_returns_version() {
     let _lock = test_lock();
@@ -301,7 +310,7 @@ fn ping_over_socket_returns_version() {
     );
     assert_eq!(value["id"], "req_1");
     assert_eq!(value["result"]["type"], "pong");
-    assert_eq!(value["result"]["version"], env!("CARGO_PKG_VERSION"));
+    assert_eq!(value["result"]["version"], expected_build_version());
     // Intentionally hardcoded so wire protocol bumps require updating this test.
     // Changing this value means old clients/servers are no longer compatible.
     assert_eq!(value["result"]["protocol"], 15);

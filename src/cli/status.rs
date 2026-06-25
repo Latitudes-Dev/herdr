@@ -219,6 +219,8 @@ struct FullStatusJson {
 #[derive(Serialize)]
 struct ClientStatusJson {
     version: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    commit: Option<&'static str>,
     channel: &'static str,
     protocol: u32,
     binary: String,
@@ -252,6 +254,7 @@ struct UpdateStatusJson {
 fn client_status_json() -> ClientStatusJson {
     ClientStatusJson {
         version: crate::build_info::version(),
+        commit: crate::build_info::build_commit(),
         channel: crate::config::Config::load().config.update.channel.as_str(),
         protocol: crate::protocol::PROTOCOL_VERSION,
         binary: current_exe_label(),
