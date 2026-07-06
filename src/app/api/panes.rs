@@ -1479,8 +1479,7 @@ impl App {
         };
         self.state.plugin_panes.remove(&pane_id);
         if should_close_workspace {
-            self.state.selected = ws_idx;
-            self.state.close_selected_workspace();
+            self.state.close_workspace_preserving_focus(ws_idx);
             self.shutdown_detached_terminal_runtimes();
             self.emit_event(EventEnvelope {
                 event: EventKind::PaneClosed,
@@ -2018,6 +2017,46 @@ mod tests {
                 }
             }
         }
+    }
+
+    fn app_with_workspaces(n: usize) -> App {
+        let (_api_tx, api_rx) = tokio::sync::mpsc::unbounded_channel();
+        let mut app = App::new(
+            &Config::default(),
+            true,
+            None,
+            api_rx,
+            crate::api::EventHub::default(),
+        );
+        app.state.workspaces = (0..n)
+            .map(|i| Workspace::test_new(&format!("ws{i}")))
+            .collect();
+        app.state.ensure_test_terminals();
+        app
+    }
+
+    #[test]
+    fn api_pane_close_collapse_preserves_focus_on_other_workspace() {
+        let mut app = app_with_workspaces(3);
+        app.state.active = Some(2);
+        app.state.selected = 2;
+        let active_id = app.state.workspaces[2].id.clone();
+        let victim_pane = app.state.workspaces[0].tabs[0].root_pane;
+        let public_pane_id = app.public_pane_id(0, victim_pane).unwrap();
+
+        let response = app.handle_pane_close(
+            "req".into(),
+            PaneTarget {
+                pane_id: public_pane_id,
+            },
+        );
+
+        let success: SuccessResponse = serde_json::from_str(&response).unwrap();
+        assert_eq!(success.id, "req");
+        assert_eq!(app.state.workspaces.len(), 2);
+        let active_idx = app.state.active.expect("active workspace");
+        assert_eq!(app.state.workspaces[active_idx].id, active_id);
+        assert_eq!(app.state.selected, active_idx);
     }
 
     #[test]
