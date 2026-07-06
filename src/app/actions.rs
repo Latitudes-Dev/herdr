@@ -2919,6 +2919,12 @@ impl AppState {
         self.mark_session_dirty();
 
         if should_close_workspace {
+            let active_id = self
+                .active
+                .and_then(|idx| self.workspaces.get(idx))
+                .map(|ws| ws.id.clone());
+            let closing_active = self.active == Some(ws_idx);
+
             self.workspaces.remove(ws_idx);
             self.remove_unattached_terminal_ids(workspace_terminal_ids);
             if self.workspaces.is_empty() {
@@ -2926,6 +2932,23 @@ impl AppState {
                 self.selected = 0;
                 if self.mode == Mode::Terminal {
                     self.mode = Mode::Navigate;
+                }
+            } else if closing_active {
+                if let Some(active) = self.active {
+                    if active >= self.workspaces.len() {
+                        self.active = Some(self.workspaces.len() - 1);
+                    }
+                }
+                if self.selected >= self.workspaces.len() {
+                    self.selected = self.workspaces.len() - 1;
+                }
+            } else if let Some(active_id) = active_id {
+                if let Some(new_idx) = self.workspaces.iter().position(|ws| ws.id == active_id) {
+                    self.selected = new_idx;
+                    self.active = Some(new_idx);
+                    self.ensure_workspace_visible(new_idx);
+                    self.tab_scroll_follow_active = true;
+                    self.refresh_tab_bar_view();
                 }
             } else {
                 if let Some(active) = self.active {
@@ -4034,6 +4057,23 @@ mod tests {
 
         assert_eq!(state.workspaces.len(), 1);
         assert_eq!(state.workspaces[0].custom_name.as_deref(), Some("b"));
+        state.assert_invariants_for_test();
+    }
+
+    #[test]
+    fn pane_died_earlier_workspace_preserves_focus() {
+        let mut state = app_with_workspaces(&["victim", "mid", "focus"]);
+        state.active = Some(2);
+        state.selected = 2;
+        let active_id = state.workspaces[2].id.clone();
+        let pane_id = *state.workspaces[0].panes.keys().next().unwrap();
+
+        state.handle_pane_died(pane_id);
+
+        assert_eq!(state.workspaces.len(), 2);
+        let active_idx = state.active.expect("active workspace");
+        assert_eq!(state.workspaces[active_idx].id, active_id);
+        assert_eq!(state.selected, active_idx);
         state.assert_invariants_for_test();
     }
 
