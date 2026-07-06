@@ -4062,10 +4062,10 @@ mod tests {
 
     #[test]
     fn pane_died_earlier_workspace_preserves_focus() {
-        let mut state = app_with_workspaces(&["victim", "mid", "focus"]);
-        state.active = Some(2);
-        state.selected = 2;
-        let active_id = state.workspaces[2].id.clone();
+        let mut state = app_with_workspaces(&["victim", "focus", "tail"]);
+        state.active = Some(1);
+        state.selected = 1;
+        let active_id = state.workspaces[1].id.clone();
         let pane_id = *state.workspaces[0].panes.keys().next().unwrap();
 
         state.handle_pane_died(pane_id);
