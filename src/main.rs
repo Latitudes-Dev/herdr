@@ -90,6 +90,7 @@ mod server;
 mod session;
 mod sound;
 mod terminal;
+mod terminal_modes;
 mod terminal_notify;
 mod terminal_theme;
 mod ui;
@@ -219,6 +220,7 @@ const DEFAULT_CONFIG: &str = r##"# herdr configuration
 # Custom commands use the same binding syntax.
 # type = "shell" runs detached in the background.
 # type = "pane" opens a temporary pane and closes it when the command exits.
+# On Windows, command strings run through cmd.exe /d /c.
 # [[keys.command]]
 # key = "prefix+alt+g"
 # type = "pane"
@@ -255,6 +257,11 @@ const DEFAULT_CONFIG: &str = r##"# herdr configuration
 # Set false to let the terminal handle normal clicks, such as Cmd-clicking URLs.
 # Pane apps like lazygit and btop can still receive mouse when they request it.
 # mouse_capture = true
+
+# Host cursor policy: "auto", "native", or "drawn".
+# "auto" draws Herdr's own cursor on Windows to avoid ConPTY cursor flicker, and uses the native terminal cursor elsewhere.
+# "native" always uses the outer terminal cursor. "drawn" always draws Herdr's cursor as terminal cell content.
+# host_cursor = "auto"
 
 # Optional modifier that forwards right-click hold/drag gestures to pane apps instead of opening Herdr's pane menu.
 # Empty/off disables this. Shift is intentionally unsupported because terminals commonly reserve Shift+mouse.
@@ -540,7 +547,7 @@ fn main() -> io::Result<()> {
             ),
             (
                 "herdr api <subcommand>",
-                "Inspect the bundled socket API schema",
+                "Inspect socket API metadata and live runtime state",
             ),
             (
                 "herdr workspace <subcommand>",
@@ -654,7 +661,13 @@ fn main() -> io::Result<()> {
     }
 
     if let Some(remote_launch) = remote_launch {
-        return remote::run_remote(remote_launch);
+        let remote_target = remote_launch.target.clone();
+        if let Err(err) = remote::run_remote(remote_launch) {
+            eprintln!("error: {err}");
+            remote::print_remote_error_hint(&err, &remote_target);
+            std::process::exit(1);
+        }
+        return Ok(());
     }
 
     let loaded_config = config::Config::load();
@@ -707,6 +720,7 @@ fn main() -> io::Result<()> {
             DisableBracketedPaste,
             DisableMouseCapture
         );
+        let _ = crate::terminal_modes::clear_host_mouse_reporting(&mut io::stdout());
         let _ = set_host_color_scheme_reports(false);
         let _ = pop_keyboard_enhancement_flags();
         ratatui::restore();
@@ -728,6 +742,7 @@ fn main() -> io::Result<()> {
 
     let result = rt.block_on(async {
         let mut terminal = ratatui::init();
+        crate::terminal_modes::clear_host_mouse_reporting(&mut io::stdout())?;
         if config.ui.mouse_capture {
             execute!(io::stdout(), EnableMouseCapture)?;
         } else {
@@ -772,6 +787,7 @@ fn main() -> io::Result<()> {
             DisableBracketedPaste,
             DisableMouseCapture
         )?;
+        crate::terminal_modes::clear_host_mouse_reporting(&mut io::stdout())?;
         set_host_color_scheme_reports(false)?;
         ratatui::restore();
 

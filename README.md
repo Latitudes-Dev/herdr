@@ -9,6 +9,12 @@
   <a href="https://herdr.dev">herdr.dev</a> · <a href="#install">install</a> · <a href="#quick-start">quick start</a> · <a href="#supported-agents">supported agents</a> · <a href="https://herdr.dev/docs/">docs</a> · <a href="https://herdr.dev/docs/socket-api/">socket api</a> · <a href="#sponsors">sponsor</a>
 </p>
 
+<p align="center">
+  <a href="https://trendshift.io/repositories/32084" target="_blank" rel="noopener noreferrer">
+    <img src="https://trendshift.io/api/badge/repositories/32084" alt="herdr was #1 GitHub Trending repository of the day on Jun 30, 2026" width="250" height="55" />
+  </a>
+</p>
+
 ---
 
 https://github.com/user-attachments/assets/043ec09f-4bdd-41d5-aee0-8fda6b83e267
@@ -168,13 +174,3 @@ Herdr is dual-licensed:
 2. Commercial: commercial licenses are available for organizations that cannot comply with AGPL.
 
 Contact: hey@herdr.dev
-
-## mandatory star history
-
-<a href="https://www.star-history.com/?repos=ogulcancelik%2Fherdr&type=date&legend=top-left">
- <picture>
-   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=ogulcancelik/herdr&type=date&theme=dark&legend=top-left&v=2026-05-19" />
-   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=ogulcancelik/herdr&type=date&legend=top-left&v=2026-05-19" />
-   <img alt="star history chart" src="https://api.star-history.com/chart?repos=ogulcancelik/herdr&type=date&legend=top-left&v=2026-05-19" />
- </picture>
-</a>

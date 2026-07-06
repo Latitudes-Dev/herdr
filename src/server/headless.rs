@@ -163,6 +163,13 @@ fn dirty_patch_intersects_hyperlinks(
     false
 }
 
+fn dirty_patch_contains_plain_url_candidate(patch: &crate::pane::TerminalDirtyPatch) -> bool {
+    patch.rows.iter().any(|(_, row_cells)| {
+        let row: String = row_cells.iter().map(|cell| cell.symbol.as_str()).collect();
+        !crate::app::actions::visible_url_spans(&row).is_empty()
+    })
+}
+
 // ---------------------------------------------------------------------------
 // Constants
 // ---------------------------------------------------------------------------
@@ -193,7 +200,8 @@ pub struct HeadlessServer {
     app: app::App,
     #[cfg(unix)]
     api_tx: Option<api::ApiRequestSender>,
-    #[cfg(unix)]
+    // Kept on every platform so dropping HeadlessServer owns API server shutdown.
+    #[cfg_attr(windows, allow(dead_code))]
     api_server: Option<api::ServerHandle>,
     #[cfg(unix)]
     client_listener: LocalListener,
@@ -246,9 +254,9 @@ fn apply_terminal_attach_scroll(
         AttachScrollDirection::Down => MouseEventKind::ScrollDown,
     };
     if let AttachScrollSource::PageKey { input } = source {
-        let host_scroll = runtime.input_state().is_some_and(|input_state| {
-            !input_state.alternate_screen && !input_state.mouse_reporting_enabled()
-        });
+        let host_scroll = runtime
+            .input_state()
+            .is_some_and(crate::pane::InputState::plain_page_keys_use_host_scrollback);
         if host_scroll {
             match direction {
                 AttachScrollDirection::Up => runtime.scroll_up(lines.max(1) as usize),
@@ -386,13 +394,11 @@ impl HeadlessServer {
         let (server_config_diagnostic, server_config_diagnostic_without_keybindings) =
             server_config_diagnostic_summaries(config_diagnostics);
         #[cfg(not(unix))]
-        let _ = (&api_tx, &api_server);
-
+        let _ = api_tx;
         Ok(Self {
             app,
             #[cfg(unix)]
             api_tx,
-            #[cfg(unix)]
             api_server,
             #[cfg(unix)]
             client_listener: listener,
@@ -619,17 +625,7 @@ impl HeadlessServer {
 
         if self.app.state.request_new_workspace {
             self.app.state.request_new_workspace = false;
-            let response = self.dispatch_headless_runtime_mutation(
-                "headless.workspace.create",
-                crate::api::schema::Method::WorkspaceCreate(
-                    crate::api::schema::WorkspaceCreateParams {
-                        cwd: None,
-                        focus: true,
-                        label: None,
-                        env: Default::default(),
-                    },
-                ),
-            );
+            let response = self.headless_workspace_create("headless.workspace.create", None, None);
             if let Err(error) = response {
                 error!(
                     code = %error.code,
@@ -644,16 +640,7 @@ impl HeadlessServer {
         if self.app.state.request_new_tab {
             self.app.state.request_new_tab = false;
             let label = self.app.state.requested_new_tab_name.take();
-            let response = self.dispatch_headless_runtime_mutation(
-                "headless.tab.create",
-                crate::api::schema::Method::TabCreate(crate::api::schema::TabCreateParams {
-                    workspace_id: None,
-                    cwd: None,
-                    focus: true,
-                    label,
-                    env: Default::default(),
-                }),
-            );
+            let response = self.headless_tab_create("headless.tab.create", label);
             if let Err(error) = response {
                 error!(
                     code = %error.code,
@@ -678,16 +665,10 @@ impl HeadlessServer {
         }
 
         if let Some(cwd) = self.app.state.request_new_workspace_cwd.take() {
-            let response = self.dispatch_headless_runtime_mutation(
+            let response = self.headless_workspace_create(
                 "headless.workspace.create_cwd",
-                crate::api::schema::Method::WorkspaceCreate(
-                    crate::api::schema::WorkspaceCreateParams {
-                        cwd: Some(cwd.display().to_string()),
-                        focus: true,
-                        label: None,
-                        env: Default::default(),
-                    },
-                ),
+                Some(cwd.display().to_string()),
+                None,
             );
             if let Err(error) = response {
                 error!(
@@ -736,6 +717,40 @@ impl HeadlessServer {
         }
 
         needs_render
+    }
+
+    fn headless_workspace_create(
+        &mut self,
+        id: &'static str,
+        cwd: Option<String>,
+        label: Option<String>,
+    ) -> Result<(), api::schema::ErrorBody> {
+        self.dispatch_headless_runtime_mutation(
+            id,
+            api::schema::Method::WorkspaceCreate(api::schema::WorkspaceCreateParams {
+                cwd,
+                focus: true,
+                label,
+                env: Default::default(),
+            }),
+        )
+    }
+
+    fn headless_tab_create(
+        &mut self,
+        id: &'static str,
+        label: Option<String>,
+    ) -> Result<(), api::schema::ErrorBody> {
+        self.dispatch_headless_runtime_mutation(
+            id,
+            api::schema::Method::TabCreate(api::schema::TabCreateParams {
+                workspace_id: None,
+                cwd: None,
+                focus: true,
+                label,
+                env: Default::default(),
+            }),
+        )
     }
 
     fn dispatch_headless_runtime_mutation(
@@ -1832,6 +1847,14 @@ impl HeadlessServer {
                 if self.send_to_foreground_client(ServerMessage::Clipboard { data }) {
                     self.app.show_clipboard_feedback();
                 }
+                true
+            }
+            AppEvent::PrefixInputSource { active } => {
+                // Input-source switching is a client-local host side effect; forward it to the
+                // foreground client (which owns the real TIS switch + run-loop pump), like clipboard.
+                self.send_to_foreground_client(ServerMessage::PrefixInputSource {
+                    active: *active,
+                });
                 true
             }
             AppEvent::StateChanged { pane_id, agent, .. } => {
@@ -3180,6 +3203,9 @@ impl HeadlessServer {
                     if dirty_patch_intersects_hyperlinks(&frame, info.inner_rect, &patch) {
                         retained_fallback!("hyperlink_intersection");
                     }
+                    if dirty_patch_contains_plain_url_candidate(&patch) {
+                        retained_fallback!("plain_url_candidate");
+                    }
                     if !apply_terminal_dirty_patch(&mut frame, info.inner_rect, patch) {
                         retained_fallback!("patch_apply_failed");
                     }
@@ -3216,6 +3242,7 @@ impl HeadlessServer {
             && self.app.state.copy_mode.is_none()
             && self.app.state.context_menu.is_none()
             && self.app.state.toast.is_none()
+            && self.app.state.copy_feedback.is_none()
             && !self.app.full_redraw_pending
     }
 
@@ -3355,6 +3382,7 @@ impl HeadlessServer {
                     let hyperlinks = crate::server::render_stream::visible_hyperlinks(
                         &self.app.state,
                         &self.app.terminal_runtimes,
+                        Some(&buffer),
                     );
                     crate::render_prof::duration_since(
                         "full_render.visible_hyperlinks",
@@ -3944,8 +3972,11 @@ pub fn run_server() -> io::Result<()> {
         // The server runs headless — disable local notification side effects.
         // Sound and terminal notifications are forwarded to connected clients
         // as ServerMessage::Notify instead of emitted by the server process.
+        // The prefix input-source switch is likewise forwarded to the foreground
+        // client (ServerMessage::PrefixInputSource), never applied in-process.
         app.state.local_sound_playback = false;
         app.local_terminal_notifications = false;
+        app.local_input_source_switch = false;
 
         // Create the headless server.
         let mut server = match HeadlessServer::new(
@@ -4045,6 +4076,7 @@ fn run_handoff_import_server(socket_path: &Path, token: &str) -> io::Result<()> 
         )?;
         app.state.local_sound_playback = false;
         app.local_terminal_notifications = false;
+        app.local_input_source_switch = false;
         crate::server::handoff::report_restored(&mut received.stream)?;
         if std::env::var("HERDR_TEST_HANDOFF_IMPORT_FAIL").as_deref() == Ok("after_restored") {
             return Err(io::Error::other(
@@ -4142,6 +4174,7 @@ mod tests {
         let mut app = crate::app::App::new(&config, true, None, api_rx, event_hub);
         app.state.local_sound_playback = false;
         app.local_terminal_notifications = false;
+        app.local_input_source_switch = false;
 
         let dir = std::env::temp_dir().join(format!(
             "hh-{}-{}",
@@ -4172,7 +4205,6 @@ mod tests {
             app,
             #[cfg(unix)]
             api_tx: None,
-            #[cfg(unix)]
             api_server: None,
             #[cfg(unix)]
             client_listener: listener,
@@ -4296,6 +4328,7 @@ mod tests {
                 api::schema::EventKind::WorkspaceCreated,
                 api::schema::EventKind::TabCreated,
                 api::schema::EventKind::PaneCreated,
+                api::schema::EventKind::LayoutUpdated,
             ]
         );
         shutdown_test_runtimes(&mut server);
@@ -4326,6 +4359,7 @@ mod tests {
             vec![
                 api::schema::EventKind::TabCreated,
                 api::schema::EventKind::PaneCreated,
+                api::schema::EventKind::LayoutUpdated,
             ]
         );
         let tab_created = events
@@ -5276,14 +5310,17 @@ next_tab = ""
         rt.shutdown_timeout(Duration::from_millis(100));
     }
 
-    #[test]
-    fn terminal_attach_page_key_host_scrolls_plain_terminal() {
+    fn with_terminal_attach_page_key_runtime(
+        initial_bytes: &[u8],
+        initial_scroll: usize,
+        test: impl FnOnce(&crate::terminal::TerminalRuntime, &mut mpsc::Receiver<Bytes>),
+    ) {
         let rt = tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()
             .expect("test runtime");
         let _runtime_guard = rt.enter();
-        let mut bytes = Vec::new();
+        let mut bytes = initial_bytes.to_vec();
         for line in 0..80 {
             bytes.extend_from_slice(format!("line {line:02}\r\n").as_bytes());
         }
@@ -5291,9 +5328,20 @@ next_tab = ""
             crate::terminal::TerminalRuntime::test_with_channel_and_scrollback_bytes(
                 20, 5, 4096, &bytes, 4,
             );
+        if initial_scroll > 0 {
+            runtime.scroll_up(initial_scroll);
+        }
 
+        test(&runtime, &mut input_rx);
+
+        drop(runtime);
+        drop(_runtime_guard);
+        rt.shutdown_timeout(Duration::from_millis(100));
+    }
+
+    fn apply_terminal_attach_page_up(runtime: &crate::terminal::TerminalRuntime) {
         apply_terminal_attach_scroll(
-            &runtime,
+            runtime,
             AttachScrollSource::PageKey {
                 input: b"\x1b[5~".to_vec(),
             },
@@ -5303,111 +5351,80 @@ next_tab = ""
             None,
             0,
         )
-        .expect("page key scroll");
+        .expect("page key");
+    }
 
-        assert_eq!(
-            runtime
-                .scroll_metrics()
-                .expect("scroll metrics")
-                .offset_from_bottom,
-            4
-        );
-        assert!(input_rx.try_recv().is_err());
-        drop(runtime);
-        drop(_runtime_guard);
-        rt.shutdown_timeout(Duration::from_millis(100));
+    #[test]
+    fn terminal_attach_page_key_host_scrolls_plain_terminal() {
+        with_terminal_attach_page_key_runtime(b"", 0, |runtime, input_rx| {
+            apply_terminal_attach_page_up(runtime);
+
+            assert_eq!(
+                runtime
+                    .scroll_metrics()
+                    .expect("scroll metrics")
+                    .offset_from_bottom,
+                4
+            );
+            assert!(input_rx.try_recv().is_err());
+        });
     }
 
     #[test]
     fn terminal_attach_page_key_forwards_when_mouse_reporting() {
-        let rt = tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .expect("test runtime");
-        let _runtime_guard = rt.enter();
-        let mut bytes = b"\x1b[?1000h".to_vec();
-        for line in 0..80 {
-            bytes.extend_from_slice(format!("line {line:02}\r\n").as_bytes());
-        }
-        let (runtime, mut input_rx) =
-            crate::terminal::TerminalRuntime::test_with_channel_and_scrollback_bytes(
-                20, 5, 4096, &bytes, 4,
+        with_terminal_attach_page_key_runtime(b"\x1b[?1000h", 3, |runtime, input_rx| {
+            apply_terminal_attach_page_up(runtime);
+
+            assert_eq!(
+                runtime
+                    .scroll_metrics()
+                    .expect("scroll metrics")
+                    .offset_from_bottom,
+                0
             );
-        runtime.scroll_up(3);
+            assert_eq!(
+                input_rx.try_recv().expect("forwarded page key"),
+                Bytes::from_static(b"\x1b[5~")
+            );
+        });
+    }
 
-        apply_terminal_attach_scroll(
-            &runtime,
-            AttachScrollSource::PageKey {
-                input: b"\x1b[5~".to_vec(),
-            },
-            AttachScrollDirection::Up,
-            4,
-            None,
-            None,
-            0,
-        )
-        .expect("page key forward");
+    #[test]
+    fn terminal_attach_page_key_forwards_when_application_cursor() {
+        with_terminal_attach_page_key_runtime(b"\x1b[?1h", 3, |runtime, input_rx| {
+            apply_terminal_attach_page_up(runtime);
 
-        assert_eq!(
-            runtime
-                .scroll_metrics()
-                .expect("scroll metrics")
-                .offset_from_bottom,
-            0
-        );
-        assert_eq!(
-            input_rx.try_recv().expect("forwarded page key"),
-            Bytes::from_static(b"\x1b[5~")
-        );
-        drop(runtime);
-        drop(_runtime_guard);
-        rt.shutdown_timeout(Duration::from_millis(100));
+            assert_eq!(
+                runtime
+                    .scroll_metrics()
+                    .expect("scroll metrics")
+                    .offset_from_bottom,
+                0
+            );
+            assert_eq!(
+                input_rx.try_recv().expect("forwarded page key"),
+                Bytes::from_static(b"\x1b[5~")
+            );
+        });
     }
 
     #[test]
     fn terminal_attach_page_key_forwards_in_alternate_screen_without_mouse_reporting() {
-        let rt = tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .expect("test runtime");
-        let _runtime_guard = rt.enter();
-        let mut bytes = b"\x1b[?1049h".to_vec();
-        for line in 0..80 {
-            bytes.extend_from_slice(format!("line {line:02}\r\n").as_bytes());
-        }
-        let (runtime, mut input_rx) =
-            crate::terminal::TerminalRuntime::test_with_channel_and_scrollback_bytes(
-                20, 5, 4096, &bytes, 4,
+        with_terminal_attach_page_key_runtime(b"\x1b[?1049h", 3, |runtime, input_rx| {
+            apply_terminal_attach_page_up(runtime);
+
+            assert_eq!(
+                runtime
+                    .scroll_metrics()
+                    .expect("scroll metrics")
+                    .offset_from_bottom,
+                0
             );
-        runtime.scroll_up(3);
-
-        apply_terminal_attach_scroll(
-            &runtime,
-            AttachScrollSource::PageKey {
-                input: b"\x1b[5~".to_vec(),
-            },
-            AttachScrollDirection::Up,
-            4,
-            None,
-            None,
-            0,
-        )
-        .expect("page key forward");
-
-        assert_eq!(
-            runtime
-                .scroll_metrics()
-                .expect("scroll metrics")
-                .offset_from_bottom,
-            0
-        );
-        assert_eq!(
-            input_rx.try_recv().expect("forwarded page key"),
-            Bytes::from_static(b"\x1b[5~")
-        );
-        drop(runtime);
-        drop(_runtime_guard);
-        rt.shutdown_timeout(Duration::from_millis(100));
+            assert_eq!(
+                input_rx.try_recv().expect("forwarded page key"),
+                Bytes::from_static(b"\x1b[5~")
+            );
+        });
     }
 
     #[test]
@@ -7275,6 +7292,48 @@ next_tab = ""
     }
 
     #[tokio::test]
+    async fn retained_pty_update_declines_while_copy_feedback_is_visible() {
+        let (mut server, client_rx, pane_id) = retained_test_server(b"aaaa");
+        server.app.state.copy_feedback = Some(crate::app::state::CopyFeedback {
+            message: "copied to clipboard".to_owned(),
+        });
+        server.render_and_stream();
+        let initial = read_server_frame(
+            client_rx
+                .recv_timeout(Duration::from_millis(100))
+                .expect("initial frame"),
+        );
+        let initial_text = frame_text(&initial);
+        assert!(
+            initial_text.contains("copied to clipboard"),
+            "expected initial full frame to include copy feedback"
+        );
+
+        let feedback_row = initial_text
+            .lines()
+            .position(|line| line.contains("copied to clipboard"))
+            .expect("copy feedback row") as u16;
+        let inner_rect = server.app.state.view.pane_infos[0].inner_rect;
+        let pane_row = feedback_row
+            .checked_sub(inner_rect.y)
+            .expect("copy feedback should overlap the pane")
+            + 1;
+        assert!(pane_row <= inner_rect.height);
+        let runtime = server
+            .app
+            .state
+            .runtime_for_pane_in_workspace(&server.app.terminal_runtimes, 0, pane_id)
+            .expect("runtime");
+        runtime.test_process_pty_bytes(format!("\x1b[{pane_row};1Hzzzz").as_bytes());
+
+        assert!(!server.render_retained_pty_update_and_stream());
+        assert!(
+            client_rx.recv_timeout(Duration::from_millis(50)).is_err(),
+            "retained path should not stream a frame that can overwrite copy feedback cells"
+        );
+    }
+
+    #[tokio::test]
     async fn retained_pty_update_matches_full_render_frame() {
         let initial = b"\x1b[6 qleft \xe4\xb8\xad";
         let update = b"\r\x1b[44mZ\x1b[0m";
@@ -7461,6 +7520,38 @@ next_tab = ""
         assert!(
             full.cells.iter().all(|cell| cell.hyperlink.is_none()),
             "full render should clear overwritten hyperlink cells"
+        );
+    }
+
+    #[tokio::test]
+    async fn retained_pty_update_declines_when_dirty_row_creates_plain_url() {
+        let (mut server, client_rx, pane_id) = retained_test_server(b"plain");
+        server.render_and_stream();
+        let _ = client_rx
+            .recv_timeout(Duration::from_millis(100))
+            .expect("initial frame");
+
+        let runtime = server
+            .app
+            .state
+            .runtime_for_pane_in_workspace(&server.app.terminal_runtimes, 0, pane_id)
+            .expect("runtime");
+        runtime.test_process_pty_bytes(b"\rhttps://example.com/new");
+
+        assert!(!server.render_retained_pty_update_and_stream());
+        assert!(client_rx.recv_timeout(Duration::from_millis(50)).is_err());
+
+        server.render_and_stream();
+        let full = read_server_frame(
+            client_rx
+                .recv_timeout(Duration::from_millis(100))
+                .expect("full frame after plain URL"),
+        );
+        assert!(
+            full.hyperlinks
+                .iter()
+                .any(|uri| uri == "https://example.com/new"),
+            "full render should synthesize plain URL hyperlink metadata"
         );
     }
 
@@ -7707,6 +7798,107 @@ next_tab = ""
             !server.clients.contains_key(&1),
             "failed targeted send should remove the broken foreground client"
         );
+    }
+
+    #[test]
+    fn prefix_input_source_targets_foreground_client_only() {
+        let mut server = test_headless_server();
+        let (background_tx, background_control_rx, _background_rx) = test_client_writer();
+        let (foreground_tx, foreground_control_rx, _foreground_rx) = test_client_writer();
+
+        server.clients.insert(
+            1,
+            ClientConnection::new(
+                (120, 40),
+                crate::kitty_graphics::HostCellSize::default(),
+                crate::terminal_theme::TerminalTheme::default(),
+                None,
+                1,
+                RenderEncoding::SemanticFrame,
+                Some(background_tx),
+            ),
+        );
+        server.clients.insert(
+            2,
+            ClientConnection::new(
+                (80, 24),
+                crate::kitty_graphics::HostCellSize::default(),
+                crate::terminal_theme::TerminalTheme::default(),
+                None,
+                2,
+                RenderEncoding::SemanticFrame,
+                Some(foreground_tx),
+            ),
+        );
+        server.foreground_client_id = Some(2);
+        server.sync_foreground_client_state();
+        // Drain any setup messages (e.g. mouse-capture sync) before exercising the event.
+        while foreground_control_rx
+            .recv_timeout(Duration::from_millis(20))
+            .is_ok()
+        {}
+
+        let changed = server
+            .handle_internal_event_with_forwarding(AppEvent::PrefixInputSource { active: true });
+
+        assert!(changed);
+        match read_server_message(
+            foreground_control_rx
+                .recv_timeout(Duration::from_millis(100))
+                .expect("foreground prefix input-source message"),
+        ) {
+            ServerMessage::PrefixInputSource { active } => assert!(active),
+            other => panic!("expected prefix input-source message, got {other:?}"),
+        }
+        assert!(
+            background_control_rx
+                .recv_timeout(Duration::from_millis(50))
+                .is_err(),
+            "background client should not receive prefix input-source changes"
+        );
+    }
+
+    #[test]
+    fn headless_app_keeps_prefix_input_source_switch_off_process() {
+        // An App-internal drain (e.g. the exhaustive drain at the top of
+        // handle_api_request) can consume a queued PrefixInputSource intent
+        // before the forwarding drain sees it. The headless App must treat the
+        // event as inert instead of switching the host input source from the
+        // server process.
+        struct CountingPrefixInputSource(std::rc::Rc<std::cell::Cell<usize>>);
+        impl crate::platform::PrefixInputSource for CountingPrefixInputSource {
+            fn switch_to_ascii(&mut self) {
+                self.0.set(self.0.get() + 1);
+            }
+            fn restore(&mut self) {
+                self.0.set(self.0.get() + 1);
+            }
+        }
+
+        let mut server = test_headless_server();
+        let calls = std::rc::Rc::new(std::cell::Cell::new(0));
+        server
+            .app
+            .set_prefix_input_source(Box::new(CountingPrefixInputSource(calls.clone())));
+
+        server
+            .app
+            .handle_internal_event(AppEvent::PrefixInputSource { active: true });
+        server
+            .app
+            .handle_internal_event(AppEvent::PrefixInputSource { active: false });
+        assert_eq!(
+            calls.get(),
+            0,
+            "headless server must not apply the host input-source switch"
+        );
+
+        // Sanity: the same event does apply once the flag is on (monolithic semantics).
+        server.app.local_input_source_switch = true;
+        server
+            .app
+            .handle_internal_event(AppEvent::PrefixInputSource { active: true });
+        assert_eq!(calls.get(), 1);
     }
 
     #[test]
@@ -8435,7 +8627,8 @@ next_tab = ""
     }
 
     /// Verify that no direct calls to `self.app.handle_internal_event`
-    /// exist outside of `handle_internal_event_with_forwarding` in this
+    /// (or its `handle_internal_event_with_prefix_sync` wrapper) exist
+    /// outside of `handle_internal_event_with_forwarding` in this
     /// module. This ensures the forwarding bypass cannot be reintroduced.
     ///
     /// The search pattern looks for `handle_internal_event` calls that
@@ -8473,7 +8666,8 @@ next_tab = ""
                         _ => {}
                     }
                 }
-            } else if line.contains("self.app.handle_internal_event(")
+            } else if (line.contains("self.app.handle_internal_event(")
+                || line.contains("self.app.handle_internal_event_with_prefix_sync("))
                 && !line.trim().starts_with("///")
                 && !line.contains("contains(")
             {

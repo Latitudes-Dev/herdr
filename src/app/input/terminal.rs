@@ -88,17 +88,19 @@ impl App {
             self.state
                 .runtime_for_pane_in_workspace(&self.terminal_runtimes, ws_idx, pane_id)?;
 
-        // Intercept plain PageUp/PageDown presses for pane scrollback when the
-        // focused pane doesn't handle its own scrolling (e.g., a plain shell
-        // with mouse off). Modified page keys are pane shortcuts, and release
-        // events should not produce a second host-scroll action.
+        // Intercept plain PageUp/PageDown presses for pane scrollback only
+        // when the focused pane looks like a shell transcript. Normal-screen
+        // pagers such as `less -X` keep the primary screen but enter
+        // application cursor mode while they own special keys.
+        // Modified page keys are pane shortcuts, and release events should not
+        // produce a second host-scroll action.
         // Only intercept when we know the pane state; if input_state is unknown,
         // fail-open and forward the key to the pane.
         if matches!(key_event.code, KeyCode::PageUp | KeyCode::PageDown)
             && key_event.modifiers.is_empty()
         {
             if let Some(input_state) = rt.input_state() {
-                if !input_state.alternate_screen && !input_state.mouse_reporting_enabled() {
+                if input_state.plain_page_keys_use_host_scrollback() {
                     if key_event.kind == crossterm::event::KeyEventKind::Release {
                         return None;
                     }
@@ -556,6 +558,150 @@ mod tests {
             ),
             None
         );
+    }
+
+    #[tokio::test]
+    async fn pane_cell_url_resolver_finds_soft_wrapped_url() {
+        let (_app, info) = app_with_screen_bytes(b"");
+        let prefix = "https://example.com/";
+        let padding = "a".repeat(info.inner_rect.width as usize - prefix.len());
+        let url = format!("{prefix}{padding}tail");
+        let (app, _info) = app_with_screen_bytes(url.as_bytes());
+        let pane_id = app.state.workspaces[0].tabs[0].root_pane;
+
+        assert_eq!(
+            app.state
+                .url_at_pane_cell(&app.terminal_runtimes, pane_id, 1, 1)
+                .as_deref(),
+            Some(url.as_str())
+        );
+    }
+
+    #[tokio::test]
+    async fn pane_cell_url_resolver_does_not_shift_after_zero_width_mark() {
+        let url = "https://example.com/mark";
+        let screen = format!("e\u{301} {url}");
+        let (app, _info) = app_with_screen_bytes(screen.as_bytes());
+        let pane_id = app.state.workspaces[0].tabs[0].root_pane;
+
+        assert_eq!(
+            app.state
+                .url_at_pane_cell(&app.terminal_runtimes, pane_id, 0, 2)
+                .as_deref(),
+            Some(url)
+        );
+    }
+
+    #[tokio::test]
+    async fn pane_cell_url_resolver_handles_hard_newline_after_full_row() {
+        let (_app, info) = app_with_screen_bytes(b"");
+        let full_row = "x".repeat(info.inner_rect.width as usize);
+        let url = "https://example.com/next";
+        let screen = format!("{full_row}\n{url}");
+        let (app, _info) = app_with_screen_bytes(screen.as_bytes());
+        let pane_id = app.state.workspaces[0].tabs[0].root_pane;
+
+        assert_eq!(
+            app.state
+                .url_at_pane_cell(&app.terminal_runtimes, pane_id, 1, 1)
+                .as_deref(),
+            None
+        );
+        assert_eq!(
+            app.state
+                .url_at_pane_cell(&app.terminal_runtimes, pane_id, 2, 1)
+                .as_deref(),
+            Some(url)
+        );
+    }
+
+    #[tokio::test]
+    async fn render_stream_synthesizes_soft_wrapped_url_hyperlinks() {
+        let (_app, info) = app_with_screen_bytes(b"");
+        let prefix = "https://example.com/";
+        let padding = "b".repeat(info.inner_rect.width as usize - prefix.len());
+        let url = format!("{prefix}{padding}tail");
+        let (app, info) = app_with_screen_bytes(url.as_bytes());
+
+        let links = crate::server::render_stream::visible_hyperlinks(
+            &app.state,
+            &app.terminal_runtimes,
+            None,
+        );
+
+        assert!(links.iter().any(|((x, y), symbol, uri)| {
+            *x == info.inner_rect.x + 1
+                && *y == info.inner_rect.y + 1
+                && symbol == "a"
+                && uri == &url
+        }));
+    }
+
+    #[tokio::test]
+    async fn render_stream_does_not_shift_url_hyperlinks_after_zero_width_mark() {
+        let url = "https://example.com/mark";
+        let screen = format!("e\u{301} {url}");
+        let (app, info) = app_with_screen_bytes(screen.as_bytes());
+
+        let links = crate::server::render_stream::visible_hyperlinks(
+            &app.state,
+            &app.terminal_runtimes,
+            None,
+        );
+
+        assert!(links.iter().any(|((x, y), symbol, uri)| {
+            *x == info.inner_rect.x + 2 && *y == info.inner_rect.y && symbol == "h" && uri == url
+        }));
+    }
+
+    #[tokio::test]
+    async fn render_stream_handles_hard_newline_after_full_row() {
+        let (_app, info) = app_with_screen_bytes(b"");
+        let full_row = "x".repeat(info.inner_rect.width as usize);
+        let url = "https://example.com/next";
+        let screen = format!("{full_row}\n{url}");
+        let (app, info) = app_with_screen_bytes(screen.as_bytes());
+        let links = crate::server::render_stream::visible_hyperlinks(
+            &app.state,
+            &app.terminal_runtimes,
+            None,
+        );
+
+        assert!(links.iter().any(|((x, y), symbol, uri)| {
+            *x == info.inner_rect.x + 1
+                && *y == info.inner_rect.y + 2
+                && symbol == "t"
+                && uri == url
+        }));
+    }
+
+    #[tokio::test]
+    async fn render_stream_filters_plain_url_when_final_cell_differs() {
+        let line = "see https://example.com/hidden";
+        let (mut app, _info) = app_with_screen_bytes(line.as_bytes());
+        let (mut buffer, _cursor) =
+            crate::server::render_stream::render_virtual_with_runtime_registry(
+                &mut app.state,
+                &app.terminal_runtimes,
+                ratatui::layout::Rect::new(0, 0, 106, 20),
+                false,
+                crate::kitty_graphics::HostCellSize::default(),
+            );
+        let info = app.state.view.pane_infos[0].clone();
+        let target_x = info.inner_rect.x + line.find("https").expect("url start") as u16;
+        let target_y = info.inner_rect.y;
+        buffer[(target_x, target_y)]
+            .set_style(ratatui::style::Style::default().fg(ratatui::style::Color::Red));
+
+        let links = crate::server::render_stream::visible_hyperlinks(
+            &app.state,
+            &app.terminal_runtimes,
+            Some(&buffer),
+        );
+
+        assert!(!links
+            .iter()
+            .any(|((x, y), _, uri)| *x == target_x && *y == target_y && uri == &line[4..]));
     }
 
     #[tokio::test]
@@ -1189,6 +1335,50 @@ mod tests {
             .and_then(crate::terminal::TerminalRuntime::scroll_metrics)
             .expect("scroll metrics after PageUp");
         // Forwarded to pane, so test runtime doesn't process it — scroll stays at bottom.
+        assert_eq!(end_metrics.offset_from_bottom, 0);
+    }
+
+    #[tokio::test]
+    async fn page_up_forwarded_to_primary_screen_application_cursor_pane() {
+        let mut app = app_for_mouse_test();
+        let mut ws = Workspace::test_new("test");
+        let pane_id = ws.tabs[0].root_pane;
+        let pane_infos = ws.tabs[0].layout.panes(Rect::new(26, 2, 80, 18));
+        let info = pane_infos[0].clone();
+        let mut bytes = b"\x1b[?1h".to_vec();
+        bytes.extend_from_slice(&numbered_lines_bytes(64));
+        let (runtime, mut input_rx) =
+            crate::terminal::TerminalRuntime::test_with_channel_and_scrollback_bytes(
+                info.inner_rect.width,
+                info.inner_rect.height,
+                16 * 1024,
+                &bytes,
+                4,
+            );
+        ws.tabs[0].runtimes.insert(pane_id, runtime);
+
+        app.state.workspaces = vec![ws];
+        app.state.active = Some(0);
+        app.state.selected = 0;
+        app.state.mode = Mode::Terminal;
+        app.state.view.pane_infos = pane_infos;
+
+        let start_metrics = app
+            .state
+            .runtime_for_pane_in_workspace(&app.terminal_runtimes, 0, pane_id)
+            .and_then(crate::terminal::TerminalRuntime::scroll_metrics)
+            .expect("initial scroll metrics");
+        assert_eq!(start_metrics.offset_from_bottom, 0);
+
+        app.handle_terminal_key_headless(TerminalKey::new(KeyCode::PageUp, KeyModifiers::empty()));
+
+        let forwarded = input_rx.try_recv().expect("forwarded PageUp");
+        assert_eq!(forwarded.as_ref(), b"\x1b[5~");
+        let end_metrics = app
+            .state
+            .runtime_for_pane_in_workspace(&app.terminal_runtimes, 0, pane_id)
+            .and_then(crate::terminal::TerminalRuntime::scroll_metrics)
+            .expect("scroll metrics after PageUp");
         assert_eq!(end_metrics.offset_from_bottom, 0);
     }
 }

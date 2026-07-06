@@ -548,7 +548,7 @@ impl App {
                         .cloned()
                         .map(|space| self.worktree_info_for_membership(&space, None));
                 }
-                self.state.close_workspace_preserving_focus(ws_idx);
+                self.close_removed_linked_worktree_workspace(ws_idx);
                 self.shutdown_detached_terminal_runtimes();
                 self.emit_event(EventEnvelope {
                     event: EventKind::WorkspaceClosed,
