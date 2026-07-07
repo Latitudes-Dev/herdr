@@ -166,6 +166,7 @@ impl App {
         };
 
         self.state.focus_pane_in_workspace(ws_idx, pane_id);
+        self.state.mark_active_tab_seen();
         self.state.settle_terminal_mode_after_focus();
 
         let Some(pane) = self.pane_info(ws_idx, pane_id) else {
@@ -2012,6 +2013,35 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn api_pane_send_keys_sends_shifted_punctuation_as_text_in_kitty_mode() {
+        let (mut app, pane_id) = app_with_test_workspace();
+        let internal_pane_id = app.state.workspaces[0].tabs[0].root_pane;
+        let (runtime, mut rx) =
+            crate::terminal::TerminalRuntime::test_with_channel_and_scrollback_bytes(
+                80,
+                24,
+                0,
+                b"\x1b[>7u",
+                1,
+            );
+        app.state.insert_test_runtime(internal_pane_id, runtime);
+
+        let response = app.handle_api_request(crate::api::schema::Request {
+            id: "req".into(),
+            method: crate::api::schema::Method::PaneSendKeys(PaneSendKeysParams {
+                pane_id,
+                keys: vec!["shift+?".into()],
+            }),
+        });
+
+        let success: SuccessResponse = serde_json::from_str(&response).unwrap();
+        assert_eq!(success.id, "req");
+        assert_eq!(success.result, ResponseResult::Ok {});
+        assert_eq!(rx.try_recv().unwrap(), bytes::Bytes::from_static(b"?"));
+        assert!(rx.try_recv().is_err());
+    }
+
+    #[tokio::test]
     async fn api_pane_send_input_keys_accept_key_combo_chords() {
         let (mut app, pane_id, mut rx) = app_with_send_key_runtime(1);
 
@@ -3512,6 +3542,40 @@ mod tests {
         assert_eq!(app.state.workspaces[1].active_tab, target_tab_idx);
         assert_eq!(app.state.workspaces[1].focused_pane_id(), Some(target_pane));
         assert_eq!(app.state.mode, Mode::Terminal);
+    }
+
+    #[test]
+    fn api_pane_focus_marks_already_focused_done_pane_seen() {
+        let mut app = app_with_linked_worktree();
+        app.state.active = Some(0);
+        app.state.selected = 0;
+        app.state.outer_terminal_focus = Some(false);
+
+        let pane_id = app.state.workspaces[0].tabs[0].root_pane;
+        let terminal_id = app.state.workspaces[0].tabs[0].panes[&pane_id]
+            .attached_terminal_id
+            .clone();
+        app.state.terminals.get_mut(&terminal_id).unwrap().state = crate::detect::AgentState::Idle;
+        app.state.workspaces[0].tabs[0]
+            .panes
+            .get_mut(&pane_id)
+            .unwrap()
+            .seen = false;
+        app.state.workspaces[0].tabs[0].layout.focus_pane(pane_id);
+
+        let public_pane_id = app.public_pane_id(0, pane_id).unwrap();
+        let response = app.handle_pane_focus(
+            "req".into(),
+            PaneTarget {
+                pane_id: public_pane_id,
+            },
+        );
+
+        let success: SuccessResponse = serde_json::from_str(&response).unwrap();
+        let ResponseResult::PaneInfo { pane } = success.result else {
+            panic!("expected pane info response");
+        };
+        assert_eq!(pane.agent_status, crate::api::schema::AgentStatus::Idle);
     }
 
     #[test]
