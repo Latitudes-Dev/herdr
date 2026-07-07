@@ -224,3 +224,255 @@ test("Pi retries working state after an unanswered socket attempt", async () => 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
 }
+
+function lastReportAgentState(requests: unknown[]): string | undefined {
+  let last: string | undefined;
+  for (const request of requests) {
+    if (!isRecord(request) || request.method !== "pane.report_agent") {
+      continue;
+    }
+    const params = request.params;
+    if (isRecord(params) && typeof params.state === "string") {
+      last = params.state;
+    }
+  }
+  return last;
+}
+
+function makeMockPi() {
+  type Handler = (event: unknown, context: unknown) => unknown;
+  const handlers = new Map<string, Handler>();
+  const pi = {
+    on(event: string, handler: Handler) {
+      handlers.set(event, handler);
+    },
+    events: {
+      on() {
+        return () => {};
+      },
+    },
+  };
+  return { pi, handlers };
+}
+
+async function startRecordingServer(path: string, onConnection: (socket: import("node:net").Socket, connectionNumber: number) => void) {
+  let connectionCount = 0;
+  const recordingServer = createServer((socket) => {
+    connectionCount += 1;
+    onConnection(socket, connectionCount);
+  });
+  server = recordingServer;
+  await new Promise<void>((resolve, reject) => {
+    recordingServer.once("error", reject);
+    recordingServer.listen(path, resolve);
+  });
+  return () => connectionCount;
+}
+
+for (const integration of integrations) {
+  test(`${integration.name} agent_end willRetry holds working past idle debounce`, async () => {
+    const recordingSocketPath = join(
+      tmpdir(),
+      `herdr-${integration.name.toLowerCase().replaceAll(" ", "-")}-willretry-${process.pid}.sock`,
+    );
+    socketPath = recordingSocketPath;
+    await rm(recordingSocketPath, { force: true });
+
+    const requests: unknown[] = [];
+    await startRecordingServer(recordingSocketPath, (socket) => {
+      let input = "";
+      socket.setEncoding("utf8");
+      socket.on("data", (chunk) => {
+        input += chunk;
+        const newline = input.indexOf("\n");
+        if (newline === -1) {
+          return;
+        }
+        requests.push(JSON.parse(input.slice(0, newline)));
+        socket.end("{}\n");
+      });
+    });
+
+    process.env.HERDR_ENV = "1";
+    process.env.HERDR_SOCKET_PATH = recordingSocketPath;
+    process.env.HERDR_PANE_ID = "test:p1";
+    if (integration.name === "Pi") {
+      process.env.HERDR_PI_IDLE_DEBOUNCE_MS = "50";
+    } else {
+      process.env.HERDR_OMP_IDLE_DEBOUNCE_MS = "50";
+    }
+
+    const { pi, handlers } = makeMockPi();
+    const { default: install } = await importFresh(integration.modulePath);
+    install(pi);
+
+    const ctx = {
+      hasUI: true,
+      isIdle: () => false,
+      sessionManager: {
+        getSessionFile: () => undefined,
+        getSessionId: () => undefined,
+      },
+    };
+
+    await handlers.get("session_start")?.({ reason: "startup" }, ctx);
+    await handlers.get("agent_start")?.({}, ctx);
+    await handlers.get("agent_end")?.({ willRetry: true, messages: [] }, ctx);
+
+    const deadline = Date.now() + 1_000;
+    while (Date.now() < deadline) {
+      await Bun.sleep(5);
+      const last = lastReportAgentState(requests);
+      if (last === "working") {
+        break;
+      }
+    }
+
+    expect(lastReportAgentState(requests)).toBe("working");
+    expect(requests.some((request) => {
+      if (!isRecord(request) || request.method !== "pane.report_agent") {
+        return false;
+      }
+      const params = request.params;
+      return isRecord(params) && params.state === "idle";
+    })).toBe(false);
+  });
+}
+
+test("Pi agent_end willRetry false settles to idle after debounce", async () => {
+  const recordingSocketPath = join(tmpdir(), `herdr-pi-willretry-false-${process.pid}.sock`);
+  socketPath = recordingSocketPath;
+  await rm(recordingSocketPath, { force: true });
+
+  const requests: unknown[] = [];
+  await startRecordingServer(recordingSocketPath, (socket) => {
+    let input = "";
+    socket.setEncoding("utf8");
+    socket.on("data", (chunk) => {
+      input += chunk;
+      const newline = input.indexOf("\n");
+      if (newline === -1) {
+        return;
+      }
+      requests.push(JSON.parse(input.slice(0, newline)));
+      socket.end("{}\n");
+    });
+  });
+
+  process.env.HERDR_ENV = "1";
+  process.env.HERDR_SOCKET_PATH = recordingSocketPath;
+  process.env.HERDR_PANE_ID = "test:p1";
+  process.env.HERDR_PI_IDLE_DEBOUNCE_MS = "50";
+
+  const { pi, handlers } = makeMockPi();
+  const { default: install } = await importFresh("./pi/herdr-agent-state.ts");
+  install(pi);
+
+  const ctx = {
+    hasUI: true,
+    isIdle: () => false,
+    sessionManager: {
+      getSessionFile: () => undefined,
+      getSessionId: () => undefined,
+    },
+  };
+
+  await handlers.get("session_start")?.({ reason: "startup" }, ctx);
+  await handlers.get("agent_start")?.({}, ctx);
+  await handlers.get("agent_end")?.({ willRetry: false, messages: [] }, ctx);
+
+  const deadline = Date.now() + 1_000;
+  while (Date.now() < deadline && lastReportAgentState(requests) !== "idle") {
+    await Bun.sleep(5);
+  }
+
+  expect(lastReportAgentState(requests)).toBe("idle");
+});
+
+test("Pi redelivers state after both socket attempts fail", async () => {
+  const recordingSocketPath = join(tmpdir(), `herdr-pi-retry-both-${process.pid}.sock`);
+  socketPath = recordingSocketPath;
+  await rm(recordingSocketPath, { force: true });
+
+  const attemptedRequests: unknown[] = [];
+  const deliveredRequests: unknown[] = [];
+  const getConnectionCount = await startRecordingServer(recordingSocketPath, (socket, connectionNumber) => {
+    let input = "";
+    socket.setEncoding("utf8");
+    socket.on("data", (chunk) => {
+      input += chunk;
+      const newline = input.indexOf("\n");
+      if (newline === -1) {
+        return;
+      }
+      const request = JSON.parse(input.slice(0, newline));
+      attemptedRequests.push(request);
+      if (connectionNumber <= 2) {
+        return;
+      }
+      deliveredRequests.push(request);
+      socket.end("{}\n");
+    });
+  });
+
+  process.env.HERDR_ENV = "1";
+  process.env.HERDR_SOCKET_PATH = recordingSocketPath;
+  process.env.HERDR_PANE_ID = "test:p1";
+  process.env.HERDR_PI_STATE_RETRY_MS = "50";
+
+  const { pi, handlers } = makeMockPi();
+  const { default: install } = await importFresh("./pi/herdr-agent-state.ts");
+  install(pi);
+
+  await handlers.get("session_start")?.(
+    { reason: "startup" },
+    {
+      hasUI: true,
+      isIdle: () => false,
+      sessionManager: {
+        getSessionFile: () => undefined,
+        getSessionId: () => undefined,
+      },
+    },
+  );
+
+  const reportedWorking = () =>
+    deliveredRequests.some((request) => {
+      if (!isRecord(request) || request.method !== "pane.report_agent") {
+        return false;
+      }
+      const params = request.params;
+      return isRecord(params) && params.state === "working";
+    });
+
+  const firstWorkingSeq = () => {
+    for (const request of attemptedRequests) {
+      if (!isRecord(request) || request.method !== "pane.report_agent") {
+        continue;
+      }
+      const params = request.params;
+      if (isRecord(params) && params.state === "working" && typeof params.seq === "number") {
+        return params.seq;
+      }
+    }
+    return undefined;
+  };
+
+  const deadline = Date.now() + 3_000;
+  while (Date.now() < deadline && !reportedWorking()) {
+    await Bun.sleep(5);
+  }
+
+  expect(reportedWorking()).toBe(true);
+  expect(getConnectionCount()).toBeGreaterThanOrEqual(3);
+  const seq = firstWorkingSeq();
+  expect(seq).toBeDefined();
+  const deliveredWorking = deliveredRequests.find((request) => {
+    if (!isRecord(request) || request.method !== "pane.report_agent") {
+      return false;
+    }
+    const params = request.params;
+    return isRecord(params) && params.state === "working";
+  });
+  expect(isRecord(deliveredWorking?.params) && deliveredWorking.params.seq).toBe(seq);
+});

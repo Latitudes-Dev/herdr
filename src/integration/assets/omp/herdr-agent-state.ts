@@ -449,6 +449,10 @@ export default function (pi) {
     agentActive = false;
 
     const retryableMessage = retryableErrorMessage(event);
+    if (event?.willRetry === true) {
+      holdForRetry(retryableMessage ?? "auto-retry in progress");
+      return;
+    }
     if (retryableMessage) {
       holdForRetry(retryableMessage);
       return;
