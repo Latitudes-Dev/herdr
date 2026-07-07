@@ -44,11 +44,11 @@ function sendRequestAttempt(request: unknown, timeoutMs: number): Promise<boolea
   });
 }
 
-async function sendRequest(request: unknown): Promise<void> {
+async function sendRequest(request: unknown): Promise<boolean> {
   if (await sendRequestAttempt(request, 500)) {
-    return;
+    return true;
   }
-  await sendRequestAttempt(request, 1500);
+  return sendRequestAttempt(request, 1500);
 }
 
 type AgentState = "working" | "blocked" | "idle";
@@ -61,6 +61,7 @@ type QueuedState = {
 
 const idleDebounceMs = parseDurationEnv("HERDR_PI_IDLE_DEBOUNCE_MS", 250);
 const retryGraceMs = parseDurationEnv("HERDR_PI_RETRY_GRACE_MS", 2500);
+const stateDeliveryRetryMs = parseDurationEnv("HERDR_PI_STATE_RETRY_MS", 1000);
 const retryableErrorPattern =
   /overloaded|provider.?returned.?error|rate.?limit|too many requests|429|500|502|503|504|service.?unavailable|server.?error|internal.?error|network.?error|connection.?error|connection.?refused|connection.?lost|websocket.?closed|websocket.?error|other side closed|fetch failed|upstream.?connect|reset before headers|socket hang up|ended without|http2 request did not get a response|timed? out|timeout|terminated|retry delay/i;
 let reportSeq = Date.now() * 1000;
@@ -140,7 +141,7 @@ function reportSession(): Promise<void> {
   });
 }
 
-function sendState(state: AgentState, message?: string, seq = nextReportSeq()): Promise<void> {
+function sendState(state: AgentState, message?: string, seq = nextReportSeq()): Promise<boolean> {
   return sendRequest({
     id: `${source}:${Date.now()}:${Math.random().toString(36).slice(2)}`,
     method: "pane.report_agent",
@@ -180,12 +181,38 @@ function shouldReleaseOnSessionShutdown(event: any): boolean {
 
 let sendInFlight = false;
 let queuedState: QueuedState | undefined;
+let deliveryRetryTimer: ReturnType<typeof setTimeout> | undefined;
+
+function cancelDeliveryRetry(): void {
+  if (deliveryRetryTimer) {
+    clearTimeout(deliveryRetryTimer);
+    deliveryRetryTimer = undefined;
+  }
+}
+
+function clearStateDelivery(): void {
+  cancelDeliveryRetry();
+  queuedState = undefined;
+}
 
 function queueState(state: AgentState, message?: string): void {
+  cancelDeliveryRetry();
   queuedState = { state, message, seq: nextReportSeq() };
   if (!sendInFlight) {
     void drainStateQueue();
   }
+}
+
+function scheduleDeliveryRetry(failed: QueuedState): void {
+  cancelDeliveryRetry();
+  deliveryRetryTimer = setTimeout(() => {
+    deliveryRetryTimer = undefined;
+    if (!queuedState) {
+      queuedState = failed;
+    }
+    void drainStateQueue();
+  }, stateDeliveryRetryMs);
+  deliveryRetryTimer.unref?.();
 }
 
 async function drainStateQueue(): Promise<void> {
@@ -198,7 +225,14 @@ async function drainStateQueue(): Promise<void> {
     while (queuedState) {
       const next = queuedState;
       queuedState = undefined;
-      await sendState(next.state, next.message, next.seq);
+      const delivered = await sendState(next.state, next.message, next.seq);
+      if (!delivered) {
+        if (queuedState) {
+          continue;
+        }
+        scheduleDeliveryRetry(next);
+        break;
+      }
     }
   } finally {
     sendInFlight = false;
@@ -374,6 +408,10 @@ export default function (pi) {
     agentActive = false;
 
     const retryableMessage = retryableErrorMessage(event);
+    if (event?.willRetry === true) {
+      holdForRetry(retryableMessage ?? "auto-retry in progress");
+      return;
+    }
     if (retryableMessage) {
       holdForRetry(retryableMessage);
       return;
@@ -387,6 +425,7 @@ export default function (pi) {
       return;
     }
     clearPendingTimers();
+    clearStateDelivery();
     if (shouldReleaseOnSessionShutdown(event)) {
       await releaseAgent();
     }
