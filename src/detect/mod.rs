@@ -114,7 +114,8 @@ pub fn agent_label(agent: Agent) -> &'static str {
 pub fn parse_agent_label(agent: &str) -> Option<Agent> {
     let name = normalized_agent_lookup_name(agent);
     match name.as_str() {
-        "pi" => Some(Agent::Pi),
+        // shuvcode: rebranded pi fork (process.title = APP_NAME)
+        "pi" | "shuvcode" => Some(Agent::Pi),
         "claude" | "claude-code" => Some(Agent::Claude),
         "codex" => Some(Agent::Codex),
         "gemini" => Some(Agent::Gemini),
@@ -144,7 +145,8 @@ pub fn identify_agent(process_name: &str) -> Option<Agent> {
     let name = normalized_agent_lookup_name(process_name);
     // Match against known binary names
     match name.as_str() {
-        "pi" => Some(Agent::Pi),
+        // shuvcode: rebranded pi fork sets process.title = "shuvcode"
+        "pi" | "shuvcode" => Some(Agent::Pi),
         "claude" | "claude-code" => Some(Agent::Claude),
         "codex" => Some(Agent::Codex),
         "gemini" => Some(Agent::Gemini),
@@ -614,6 +616,7 @@ mod tests {
     #[test]
     fn identify_known_agents() {
         assert_eq!(identify_agent("pi"), Some(Agent::Pi));
+        assert_eq!(identify_agent("shuvcode"), Some(Agent::Pi));
         assert_eq!(identify_agent("claude"), Some(Agent::Claude));
         assert_eq!(identify_agent("claude-code"), Some(Agent::Claude));
         assert_eq!(identify_agent("codex"), Some(Agent::Codex));
@@ -647,6 +650,7 @@ mod tests {
     #[test]
     fn parse_known_agent_labels() {
         assert_eq!(parse_agent_label("pi"), Some(Agent::Pi));
+        assert_eq!(parse_agent_label("shuvcode"), Some(Agent::Pi));
         assert_eq!(parse_agent_label("claude"), Some(Agent::Claude));
         assert_eq!(parse_agent_label("cursor-agent"), Some(Agent::Cursor));
         assert_eq!(parse_agent_label("devin-cli"), Some(Agent::Devin));
@@ -704,9 +708,22 @@ mod tests {
     #[test]
     fn identify_case_insensitive() {
         assert_eq!(identify_agent("Pi"), Some(Agent::Pi));
+        assert_eq!(identify_agent("Shuvcode"), Some(Agent::Pi));
         assert_eq!(identify_agent("CLAUDE"), Some(Agent::Claude));
         assert_eq!(identify_agent("Codex"), Some(Agent::Codex));
         assert_eq!(identify_agent("Devin"), Some(Agent::Devin));
+    }
+
+    #[test]
+    fn identify_agent_in_job_detects_shuvcode_as_pi() {
+        let job = crate::platform::ForegroundJob {
+            process_group_id: 42,
+            processes: vec![foreground_process(42, "shuvcode", &["shuvcode"])],
+        };
+        assert_eq!(
+            identify_agent_in_job(&job),
+            Some((Agent::Pi, "shuvcode".to_string()))
+        );
     }
 
     #[test]
