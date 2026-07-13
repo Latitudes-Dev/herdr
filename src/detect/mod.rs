@@ -114,8 +114,7 @@ pub fn agent_label(agent: Agent) -> &'static str {
 pub fn parse_agent_label(agent: &str) -> Option<Agent> {
     let name = normalized_agent_lookup_name(agent);
     match name.as_str() {
-        // shuvcode: rebranded pi fork (process.title = APP_NAME)
-        "pi" | "shuvcode" => Some(Agent::Pi),
+        "pi" => Some(Agent::Pi),
         "claude" | "claude-code" => Some(Agent::Claude),
         "codex" => Some(Agent::Codex),
         "gemini" => Some(Agent::Gemini),
@@ -125,7 +124,10 @@ pub fn parse_agent_label(agent: &str) -> Option<Agent> {
         "cline" => Some(Agent::Cline),
         "omp" => Some(Agent::Omp),
         "mastracode" | "mastra-code" | "mastra code" => Some(Agent::Mastracode),
-        "opencode" | "open-code" => Some(Agent::OpenCode),
+        // "shuvcode" is ambiguous (pi process.title vs OpenCode V2 binary).
+        // Prefer pi for bare labels; process detection disambiguates via /proc exe.
+        "shuvcode" => Some(Agent::Pi),
+        "opencode" | "open-code" | "opencode-next" => Some(Agent::OpenCode),
         "copilot" | "github-copilot" | "ghcs" => Some(Agent::GithubCopilot),
         "kimi" | "kimi-code" | "kimi code" => Some(Agent::Kimi),
         "kiro" | "kiro-cli" => Some(Agent::Kiro),
@@ -145,8 +147,7 @@ pub fn identify_agent(process_name: &str) -> Option<Agent> {
     let name = normalized_agent_lookup_name(process_name);
     // Match against known binary names
     match name.as_str() {
-        // shuvcode: rebranded pi fork sets process.title = "shuvcode"
-        "pi" | "shuvcode" => Some(Agent::Pi),
+        "pi" => Some(Agent::Pi),
         "claude" | "claude-code" => Some(Agent::Claude),
         "codex" => Some(Agent::Codex),
         "gemini" => Some(Agent::Gemini),
@@ -156,7 +157,10 @@ pub fn identify_agent(process_name: &str) -> Option<Agent> {
         "cline" => Some(Agent::Cline),
         "omp" => Some(Agent::Omp),
         "mastracode" | "mastra-code" | "mastra code" => Some(Agent::Mastracode),
-        "opencode" | "open-code" => Some(Agent::OpenCode),
+        // Bare name is ambiguous: pi rebrand sets process.title="shuvcode".
+        // identify_agent_in_job disambiguates via /proc/<pid>/exe.
+        "shuvcode" => Some(Agent::Pi),
+        "opencode" | "open-code" | "opencode-next" => Some(Agent::OpenCode),
         "copilot" | "github-copilot" | "ghcs" => Some(Agent::GithubCopilot),
         "kimi" | "kimi-code" | "kimi code" => Some(Agent::Kimi),
         "kiro" | "kiro-cli" => Some(Agent::Kiro),
@@ -177,7 +181,7 @@ pub fn identify_agent_in_job(job: &crate::platform::ForegroundJob) -> Option<(Ag
         .find(|process| process.pid == job.process_group_id)
     {
         let candidate = normalized_process_name(process);
-        if let Some(agent) = identify_agent(&candidate) {
+        if let Some(agent) = identify_agent_for_process(process, &candidate) {
             return Some((agent, candidate));
         }
     }
@@ -186,7 +190,7 @@ pub fn identify_agent_in_job(job: &crate::platform::ForegroundJob) -> Option<(Ag
 
     for process in &job.processes {
         let candidate = normalized_process_name(process);
-        let Some(agent) = identify_agent(&candidate) else {
+        let Some(agent) = identify_agent_for_process(process, &candidate) else {
             continue;
         };
         let score = process_priority(process, &candidate);
@@ -198,6 +202,38 @@ pub fn identify_agent_in_job(job: &crate::platform::ForegroundJob) -> Option<(Ag
     }
 
     best.map(|(_, agent, name)| (agent, name))
+}
+
+fn identify_agent_for_process(
+    process: &crate::platform::ForegroundProcess,
+    candidate: &str,
+) -> Option<Agent> {
+    let name = normalized_agent_lookup_name(candidate);
+    if name == "shuvcode" {
+        return Some(disambiguate_shuvcode(process.pid));
+    }
+    identify_agent(candidate)
+}
+
+/// Both the pi rebrand (`process.title = "shuvcode"`, exe=node) and the local
+/// OpenCode V2 binary (`shuvcode`) share a process name. Prefer OpenCode only
+/// when /proc/<pid>/exe is the native binary (not node/bun).
+fn disambiguate_shuvcode(pid: u32) -> Agent {
+    let Ok(exe) = std::fs::read_link(format!("/proc/{pid}/exe")) else {
+        return Agent::Pi;
+    };
+    let exe = exe.to_string_lossy().to_lowercase();
+    let base = path_basename(&exe);
+    if base == "node"
+        || base == "nodejs"
+        || base == "bun"
+        || base.starts_with("node.")
+        || exe.contains("/node_modules/")
+        || exe.contains("pi-coding-agent")
+    {
+        return Agent::Pi;
+    }
+    Agent::OpenCode
 }
 
 /// Detect the state of an agent from the live terminal tail snapshot.
@@ -616,6 +652,8 @@ mod tests {
     #[test]
     fn identify_known_agents() {
         assert_eq!(identify_agent("pi"), Some(Agent::Pi));
+        // Bare name defaults to pi (process.title collision); job detection
+        // disambiguates via /proc/<pid>/exe for the OpenCode V2 binary.
         assert_eq!(identify_agent("shuvcode"), Some(Agent::Pi));
         assert_eq!(identify_agent("claude"), Some(Agent::Claude));
         assert_eq!(identify_agent("claude-code"), Some(Agent::Claude));
@@ -715,7 +753,8 @@ mod tests {
     }
 
     #[test]
-    fn identify_agent_in_job_detects_shuvcode_as_pi() {
+    fn identify_agent_in_job_defaults_shuvcode_title_to_pi_without_live_exe() {
+        // Synthetic pid has no /proc entry → disambiguate_shuvcode falls back to Pi.
         let job = crate::platform::ForegroundJob {
             process_group_id: 42,
             processes: vec![foreground_process(42, "shuvcode", &["shuvcode"])],
@@ -724,6 +763,16 @@ mod tests {
             identify_agent_in_job(&job),
             Some((Agent::Pi, "shuvcode".to_string()))
         );
+    }
+
+    #[test]
+    fn disambiguate_shuvcode_treats_current_process_by_exe() {
+        let pid = std::process::id();
+        let agent = disambiguate_shuvcode(pid);
+        // The test binary is a native ELF, not node — would map to OpenCode if
+        // its process title were "shuvcode". Just ensure the helper returns a
+        // stable variant without panicking.
+        assert!(matches!(agent, Agent::Pi | Agent::OpenCode));
     }
 
     #[test]

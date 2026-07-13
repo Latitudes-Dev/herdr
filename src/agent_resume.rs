@@ -163,8 +163,15 @@ pub fn plan(source: &str, agent: &str, session_ref: &AgentSessionRef) -> Option<
             ]
         }
         ("herdr:opencode", "opencode", AgentSessionRefKind::Id) => {
+            // Local OpenCode V2 host is the shuvcode wrapper (isolated config/auth).
+            // Fall back to plain opencode only when shuvcode is not on PATH.
+            let binary = if which_binary("shuvcode") {
+                "shuvcode"
+            } else {
+                "opencode"
+            };
             vec![
-                "opencode".into(),
+                binary.into(),
                 "--session".into(),
                 session_ref.value.clone(),
             ]
@@ -221,6 +228,17 @@ fn is_official_agent_source(source: &str, agent: &str) -> bool {
             | ("herdr:kilo", "kilo")
             | ("herdr:cursor", "cursor")
     )
+}
+
+fn which_binary(name: &str) -> bool {
+    std::env::var_os("PATH")
+        .map(|paths| {
+            std::env::split_paths(&paths).any(|dir| {
+                let candidate = dir.join(name);
+                candidate.is_file()
+            })
+        })
+        .unwrap_or(false)
 }
 
 fn valid_session_id(value: &str) -> bool {
@@ -362,16 +380,22 @@ mod tests {
             .argv,
             vec!["hermes", "--resume", "hermes-session"]
         );
-        assert_eq!(
-            plan(
+        {
+            // Binary is PATH-dependent (shuvcode when present, else opencode).
+            let argv = plan(
                 "herdr:opencode",
                 "opencode",
-                &AgentSessionRef::id("opencode-session").unwrap()
+                &AgentSessionRef::id("opencode-session").unwrap(),
             )
             .unwrap()
-            .argv,
-            vec!["opencode", "--session", "opencode-session"]
-        );
+            .argv;
+            assert!(
+                argv[0] == "shuvcode" || argv[0] == "opencode",
+                "unexpected opencode resume binary: {}",
+                argv[0]
+            );
+            assert_eq!(&argv[1..], ["--session", "opencode-session"]);
+        }
         assert_eq!(
             plan(
                 "herdr:qodercli",
