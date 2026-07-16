@@ -170,11 +170,7 @@ pub fn plan(source: &str, agent: &str, session_ref: &AgentSessionRef) -> Option<
             } else {
                 "opencode"
             };
-            vec![
-                binary.into(),
-                "--session".into(),
-                session_ref.value.clone(),
-            ]
+            vec![binary.into(), "--session".into(), session_ref.value.clone()]
         }
         ("herdr:qodercli", "qodercli", AgentSessionRefKind::Id) => {
             vec![
