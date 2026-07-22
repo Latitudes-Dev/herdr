@@ -12,7 +12,7 @@
 - Programmatic workspace teardown no longer steals focus from the workspace the user is actively using. API workspace close, worktree remove, last-pane `pane.close` collapse, and background `PaneDied` workspace collapse restore focus by workspace id when the active workspace survives.
 - Oh My Pi panes now honor `agent_end.willRetry` and keep reporting Working across provider auto-retry backoff instead of flipping Idle between attempts.
 - Pi state reports that fail both socket delivery attempts are requeued until acknowledged or session shutdown, so a lost report cannot leave full-lifecycle hook authority stuck on a stale state. Pi idle/working transitions continue to follow upstream `agent_settled` lifecycle events rather than the older `agent_end` retry-hold path.
-- Process detection disambiguates the shared `shuvcode` name: bare labels and node/bun process titles map to Pi, while a native `shuvcode` binary registers as OpenCode. OpenCode resume prefers the `shuvcode` wrapper when it is on `PATH`.
+- Process detection recognizes `shuvcode` as OpenCode, and OpenCode resume prefers the `shuvcode` wrapper when it is on `PATH`.
 - OMP integration install, status, and uninstall now respect `PI_CONFIG_DIR` when `PI_CODING_AGENT_DIR` is not set, and installation refuses extension-directory collisions with Pi. (#1696)
 
 ## [0.7.5] - 2026-07-21

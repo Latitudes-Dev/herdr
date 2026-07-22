@@ -1,8 +1,8 @@
 id = "opencode"
-version = "2026.06.10.1"
+version = "2026.07.22.1"
 min_engine_version = 1
-updated_at = "2026-06-10T00:00:00Z"
-aliases = ["open-code", "herdr:opencode", "opencode-next"]
+updated_at = "2026-07-22T00:00:00Z"
+aliases = ["open-code", "herdr:opencode", "opencode-next", "shuvcode"]
 
 [[rules]]
 id = "permission_required"

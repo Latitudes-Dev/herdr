@@ -301,14 +301,11 @@ fn all_bundled_manifests_parse_and_validate() {
 }
 
 #[test]
-fn opencode_manifest_aliases_do_not_claim_shuvcode() {
-    // Bare "shuvcode" maps to Pi. An OpenCode alias of the same name makes
-    // manifest_matches_agent(opencode, Pi) true via parse_agent_label and can
-    // attach OpenCode screen rules to Pi panes.
+fn opencode_manifest_aliases_claim_shuvcode() {
     let manifest = bundled_manifest(Agent::OpenCode).expect("bundled opencode");
     assert!(
-        !manifest.aliases.iter().any(|alias| alias == "shuvcode"),
-        "opencode aliases must not include shuvcode: {:?}",
+        manifest.aliases.iter().any(|alias| alias == "shuvcode"),
+        "opencode aliases should include shuvcode: {:?}",
         manifest.aliases
     );
     assert!(
@@ -323,7 +320,7 @@ fn opencode_manifest_aliases_do_not_claim_shuvcode() {
     assert!(manifest_matches_agent(&manifest, Agent::OpenCode));
     assert_eq!(
         crate::detect::parse_agent_label("shuvcode"),
-        Some(Agent::Pi)
+        Some(Agent::OpenCode)
     );
     assert_eq!(
         crate::detect::parse_agent_label("opencode-next"),
