@@ -1278,6 +1278,81 @@ mod tests {
         assert!(target_membership.is_linked_worktree);
     }
 
+    #[test]
+    fn close_removed_linked_worktree_preserves_unrelated_focus() {
+        // Removing a background linked worktree must not yank focus away from
+        // the workspace the user is actively using.
+        let mut app = app_for_worktree_tests();
+        app.state.workspaces = vec![
+            crate::workspace::Workspace::test_new("linked"),
+            crate::workspace::Workspace::test_new("focus"),
+            crate::workspace::Workspace::test_new("parent"),
+        ];
+        app.state.workspaces[0].worktree_space = Some(crate::workspace::WorktreeSpaceMembership {
+            key: "repo-key".into(),
+            label: "herdr".into(),
+            repo_root: "/repo/herdr".into(),
+            checkout_path: "/repo/herdr-linked".into(),
+            is_linked_worktree: true,
+        });
+        app.state.workspaces[2].worktree_space = Some(crate::workspace::WorktreeSpaceMembership {
+            key: "repo-key".into(),
+            label: "herdr".into(),
+            repo_root: "/repo/herdr".into(),
+            checkout_path: "/repo/herdr".into(),
+            is_linked_worktree: false,
+        });
+        app.state.active = Some(1);
+        app.state.selected = 1;
+        app.state.ensure_test_terminals();
+        let focus_id = app.state.workspaces[1].id.clone();
+
+        app.close_removed_linked_worktree_workspace(0);
+
+        assert_eq!(app.state.workspaces.len(), 2);
+        let active_idx = app.state.active.expect("active workspace");
+        assert_eq!(app.state.workspaces[active_idx].id, focus_id);
+        assert_eq!(app.state.selected, active_idx);
+        app.state.assert_invariants_for_test();
+        shutdown_test_runtimes(&mut app);
+    }
+
+    #[test]
+    fn close_removed_linked_worktree_closing_active_switches_to_parent() {
+        let mut app = app_for_worktree_tests();
+        app.state.workspaces = vec![
+            crate::workspace::Workspace::test_new("parent"),
+            crate::workspace::Workspace::test_new("linked"),
+        ];
+        app.state.workspaces[0].worktree_space = Some(crate::workspace::WorktreeSpaceMembership {
+            key: "repo-key".into(),
+            label: "herdr".into(),
+            repo_root: "/repo/herdr".into(),
+            checkout_path: "/repo/herdr".into(),
+            is_linked_worktree: false,
+        });
+        app.state.workspaces[1].worktree_space = Some(crate::workspace::WorktreeSpaceMembership {
+            key: "repo-key".into(),
+            label: "herdr".into(),
+            repo_root: "/repo/herdr".into(),
+            checkout_path: "/repo/herdr-linked".into(),
+            is_linked_worktree: true,
+        });
+        app.state.active = Some(1);
+        app.state.selected = 1;
+        app.state.ensure_test_terminals();
+        let parent_id = app.state.workspaces[0].id.clone();
+
+        app.close_removed_linked_worktree_workspace(1);
+
+        assert_eq!(app.state.workspaces.len(), 1);
+        let active_idx = app.state.active.expect("active workspace");
+        assert_eq!(app.state.workspaces[active_idx].id, parent_id);
+        assert_eq!(app.state.selected, active_idx);
+        app.state.assert_invariants_for_test();
+        shutdown_test_runtimes(&mut app);
+    }
+
     #[tokio::test]
     async fn ui_worktree_open_new_workspace_emits_api_parity_events() {
         let checkout = unique_temp_path("app-worktree-open-event-checkout");
@@ -1756,6 +1831,7 @@ mod tests {
                 enabled: true,
                 platforms: None,
                 build: Vec::new(),
+                startup: Vec::new(),
                 actions: Vec::new(),
                 events: vec![crate::api::schema::PluginManifestEventHook {
                     on: "worktree.created".into(),
