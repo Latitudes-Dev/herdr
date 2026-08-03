@@ -10,13 +10,28 @@ pub fn build_id() -> Option<&'static str> {
     non_empty(option_env!("HERDR_BUILD_ID"))
 }
 
-pub fn version() -> String {
+pub fn build_commit() -> Option<&'static str> {
+    non_empty(option_env!("HERDR_BUILD_COMMIT"))
+}
+
+fn channel_version() -> String {
     match channel() {
         "stable" => BASE_VERSION.to_string(),
         channel => match build_id() {
             Some(build_id) => format!("{BASE_VERSION}-{channel}.{build_id}"),
             None => format!("{BASE_VERSION}-{channel}"),
         },
+    }
+}
+
+pub fn release_label() -> String {
+    channel_version()
+}
+
+pub fn version() -> String {
+    match build_commit() {
+        Some(commit) => format!("{}+{commit}", channel_version()),
+        None => channel_version(),
     }
 }
 
@@ -40,5 +55,13 @@ mod tests {
     #[test]
     fn stable_version_defaults_to_cargo_version() {
         assert!(!super::version().is_empty());
+        assert!(super::version().starts_with(super::BASE_VERSION));
+    }
+
+    #[test]
+    fn version_includes_commit_suffix_when_present() {
+        if let Some(commit) = super::build_commit() {
+            assert!(super::version().ends_with(&format!("+{commit}")));
+        }
     }
 }

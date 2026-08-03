@@ -366,6 +366,15 @@ fn integration_status_rejects_unknown_flags() {
     cleanup_test_base(&base);
 }
 
+fn expected_build_version() -> String {
+    match option_env!("HERDR_BUILD_COMMIT") {
+        Some(commit) if !commit.trim().is_empty() => {
+            format!("{}+{}", env!("CARGO_PKG_VERSION"), commit.trim())
+        }
+        _ => env!("CARGO_PKG_VERSION").to_string(),
+    }
+}
+
 #[test]
 fn status_commands_report_client_and_server_versions() {
     let base = unique_test_dir();
@@ -375,6 +384,7 @@ fn status_commands_report_client_and_server_versions() {
 
     let herdr = spawn_herdr(&config_home, &runtime_dir, &socket_path);
     wait_for_socket(&socket_path, Duration::from_secs(5));
+    let expected_version = expected_build_version();
 
     let full = run_cli(&socket_path, &["status"]);
     assert!(
@@ -385,7 +395,7 @@ fn status_commands_report_client_and_server_versions() {
     let full_stdout = String::from_utf8_lossy(&full.stdout);
     assert!(full_stdout.contains("client:\n"), "stdout: {full_stdout}");
     assert!(
-        full_stdout.contains(&format!("  version: {}", env!("CARGO_PKG_VERSION"))),
+        full_stdout.contains(&format!("  version: {expected_version}")),
         "stdout: {full_stdout}"
     );
     assert!(
@@ -418,7 +428,7 @@ fn status_commands_report_client_and_server_versions() {
         "stdout: {server_stdout}"
     );
     assert!(
-        server_stdout.contains(&format!("version: {}", env!("CARGO_PKG_VERSION"))),
+        server_stdout.contains(&format!("version: {expected_version}")),
         "stdout: {server_stdout}"
     );
     assert!(
@@ -430,7 +440,7 @@ fn status_commands_report_client_and_server_versions() {
     assert!(client.status.success());
     let client_stdout = String::from_utf8_lossy(&client.stdout);
     assert!(
-        client_stdout.contains(&format!("version: {}", env!("CARGO_PKG_VERSION"))),
+        client_stdout.contains(&format!("version: {expected_version}")),
         "stdout: {client_stdout}"
     );
     assert!(
@@ -443,7 +453,7 @@ fn status_commands_report_client_and_server_versions() {
     );
 
     let full_json = run_cli_json(&socket_path, &["status", "--json"]);
-    assert_eq!(full_json["client"]["version"], env!("CARGO_PKG_VERSION"));
+    assert_eq!(full_json["client"]["version"], expected_version);
     assert_eq!(full_json["client"]["protocol"], 20);
     assert_eq!(full_json["server"]["status"], "running");
     assert_eq!(full_json["server"]["running"], true);
@@ -457,12 +467,12 @@ fn status_commands_report_client_and_server_versions() {
 
     let server_json = run_cli_json(&socket_path, &["status", "server", "--json"]);
     assert_eq!(server_json["status"], "running");
-    assert_eq!(server_json["version"], env!("CARGO_PKG_VERSION"));
+    assert_eq!(server_json["version"], expected_version);
     assert_eq!(server_json["protocol"], 20);
     assert_eq!(server_json["compatible"], true);
 
     let client_json = run_cli_json(&socket_path, &["status", "client", "--json"]);
-    assert_eq!(client_json["version"], env!("CARGO_PKG_VERSION"));
+    assert_eq!(client_json["version"], expected_version);
     assert_eq!(client_json["protocol"], 20);
     assert!(client_json["binary"]
         .as_str()
