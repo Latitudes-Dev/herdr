@@ -10,6 +10,7 @@ const originalEnvironment = {
   HERDR_ENV: process.env.HERDR_ENV,
   HERDR_OMP_IDLE_DEBOUNCE_MS: process.env.HERDR_OMP_IDLE_DEBOUNCE_MS,
   HERDR_PANE_ID: process.env.HERDR_PANE_ID,
+  HERDR_PI_STATE_RETRY_MS: process.env.HERDR_PI_STATE_RETRY_MS,
   HERDR_SOCKET_PATH: process.env.HERDR_SOCKET_PATH,
 };
 
@@ -538,6 +539,99 @@ test("Pi retries working state after an unanswered socket attempt", async () => 
   expect(connectionCount()).toBeGreaterThanOrEqual(2);
   expect(attemptedRequests.length).toBeGreaterThanOrEqual(2);
   expect(attemptedRequests[1]).toEqual(attemptedRequests[0]);
+  expect(reportedWorking()).toBe(true);
+});
+
+test("Oh My Pi agent_end willRetry holds working past idle debounce", async () => {
+  const requests = await startRecordingServer("omp-willretry");
+  process.env.HERDR_OMP_IDLE_DEBOUNCE_MS = "50";
+  const { handlers, pi } = createExtensionHarness();
+
+  const { default: install } = await importFresh("./omp/herdr-agent-state.ts");
+  install(pi);
+
+  const context = {
+    hasUI: true,
+    isIdle: () => false,
+    sessionManager: {
+      getSessionFile: () => undefined,
+      getSessionId: () => undefined,
+    },
+  };
+  handlers.get("session_start")?.({ reason: "startup" }, context);
+  handlers.get("agent_start")?.({}, context);
+  handlers.get("agent_end")?.({ willRetry: true, messages: [] }, context);
+
+  await Bun.sleep(150);
+
+  expect(requestStates(requests)).toContain("working");
+  expect(requestStates(requests)).not.toContain("idle");
+});
+
+test("Pi redelivers state after both socket attempts fail", async () => {
+  const recordingSocketPath = join(tmpdir(), `herdr-pi-retry-both-${process.pid}.sock`);
+  socketPath = recordingSocketPath;
+  await rm(recordingSocketPath, { force: true });
+
+  const attemptedRequests: unknown[] = [];
+  const deliveredRequests: unknown[] = [];
+  let connectionCount = 0;
+  const recordingServer = createServer((socket) => {
+    connectionCount += 1;
+    let input = "";
+    socket.setEncoding("utf8");
+    socket.on("data", (chunk) => {
+      input += chunk;
+      const newline = input.indexOf("\n");
+      if (newline === -1) {
+        return;
+      }
+      const request = JSON.parse(input.slice(0, newline));
+      attemptedRequests.push(request);
+      if (connectionCount <= 2) {
+        return;
+      }
+      deliveredRequests.push(request);
+      socket.end("{}\n");
+    });
+  });
+  server = recordingServer;
+  await new Promise<void>((resolve, reject) => {
+    recordingServer.once("error", reject);
+    recordingServer.listen(recordingSocketPath, resolve);
+  });
+
+  configureIntegrationEnvironment(recordingSocketPath);
+  process.env.HERDR_PI_STATE_RETRY_MS = "50";
+  const { handlers, pi } = createExtensionHarness();
+  const { default: install } = await importFresh("./pi/herdr-agent-state.ts");
+  install(pi);
+
+  await handlers.get("session_start")?.(
+    { reason: "startup" },
+    {
+      hasUI: true,
+      mode: "tui",
+      isIdle: () => false,
+      sessionManager: {
+        getSessionFile: () => undefined,
+        getSessionId: () => undefined,
+      },
+    },
+  );
+
+  const reportedWorking = () =>
+    deliveredRequests.some((request) => {
+      if (!isRecord(request) || request.method !== "pane.report_agent") {
+        return false;
+      }
+      const params = request.params;
+      return isRecord(params) && params.state === "working";
+    });
+
+  await waitFor(() => reportedWorking(), 3_000);
+
+  expect(connectionCount).toBeGreaterThanOrEqual(3);
   expect(reportedWorking()).toBe(true);
 });
 

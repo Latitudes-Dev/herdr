@@ -2,7 +2,7 @@
 // managed by herdr; reinstalling or updating the integration overwrites this file.
 // add custom hooks/plugins beside this file instead of editing it.
 // HERDR_INTEGRATION_ID=omp
-// HERDR_INTEGRATION_VERSION=8
+// HERDR_INTEGRATION_VERSION=9
 // @ts-nocheck
 
 import net from "node:net";
@@ -446,6 +446,10 @@ export default function (pi) {
     agentActive = false;
 
     const retryableMessage = retryableErrorMessage(event);
+    if (event?.willRetry === true) {
+      holdForRetry(retryableMessage ?? "auto-retry in progress");
+      return;
+    }
     if (retryableMessage) {
       holdForRetry(retryableMessage);
       return;

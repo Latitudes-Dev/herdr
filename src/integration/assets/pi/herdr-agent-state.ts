@@ -2,7 +2,7 @@
 // managed by herdr; reinstalling or updating the integration overwrites this file.
 // add custom hooks/plugins beside this file instead of editing it.
 // HERDR_INTEGRATION_ID=pi
-// HERDR_INTEGRATION_VERSION=8
+// HERDR_INTEGRATION_VERSION=9
 // @ts-nocheck
 
 import net from "node:net";
@@ -46,11 +46,11 @@ function sendRequestAttempt(request: unknown, timeoutMs: number): Promise<boolea
   });
 }
 
-async function sendRequest(request: unknown): Promise<void> {
+async function sendRequest(request: unknown): Promise<boolean> {
   if (await sendRequestAttempt(request, 500)) {
-    return;
+    return true;
   }
-  await sendRequestAttempt(request, 1500);
+  return sendRequestAttempt(request, 1500);
 }
 
 type AgentState = "working" | "blocked" | "idle";
@@ -60,6 +60,20 @@ type QueuedState = {
   message?: string;
   seq: number;
 };
+
+const stateDeliveryRetryMs = parseDurationEnv("HERDR_PI_STATE_RETRY_MS", 1000);
+
+function parseDurationEnv(name: string, fallback: number): number {
+  const raw = process.env[name];
+  if (!raw) {
+    return fallback;
+  }
+  const parsed = Number.parseInt(raw, 10);
+  if (!Number.isFinite(parsed) || parsed < 0) {
+    return fallback;
+  }
+  return parsed;
+}
 
 let reportSeq = Date.now() * 1000;
 let currentAgentSessionId: string | undefined;
@@ -107,10 +121,10 @@ function currentSessionRef(): Record<string, unknown> | undefined {
   return undefined;
 }
 
-function reportSession(sessionStartSource?: string): Promise<void> {
+function reportSession(sessionStartSource?: string): Promise<boolean> {
   const sessionRef = currentSessionRef();
   if (!sessionRef) {
-    return Promise.resolve();
+    return Promise.resolve(true);
   }
 
   return sendRequest({
@@ -127,7 +141,7 @@ function reportSession(sessionStartSource?: string): Promise<void> {
   });
 }
 
-function sendState(state: AgentState, message?: string, seq = nextReportSeq()): Promise<void> {
+function sendState(state: AgentState, message?: string, seq = nextReportSeq()): Promise<boolean> {
   return sendRequest({
     id: `${source}:${Date.now()}:${Math.random().toString(36).slice(2)}`,
     method: "pane.report_agent",
@@ -144,12 +158,33 @@ function sendState(state: AgentState, message?: string, seq = nextReportSeq()): 
 
 let sendInFlight = false;
 let queuedState: QueuedState | undefined;
+let deliveryRetryTimer: ReturnType<typeof setTimeout> | undefined;
+
+function cancelDeliveryRetry(): void {
+  if (deliveryRetryTimer) {
+    clearTimeout(deliveryRetryTimer);
+    deliveryRetryTimer = undefined;
+  }
+}
 
 function queueState(state: AgentState, message?: string): void {
+  cancelDeliveryRetry();
   queuedState = { state, message, seq: nextReportSeq() };
   if (!sendInFlight) {
     void drainStateQueue();
   }
+}
+
+function scheduleDeliveryRetry(failed: QueuedState): void {
+  cancelDeliveryRetry();
+  deliveryRetryTimer = setTimeout(() => {
+    deliveryRetryTimer = undefined;
+    if (!queuedState) {
+      queuedState = failed;
+    }
+    void drainStateQueue();
+  }, stateDeliveryRetryMs);
+  deliveryRetryTimer.unref?.();
 }
 
 async function drainStateQueue(): Promise<void> {
@@ -162,7 +197,14 @@ async function drainStateQueue(): Promise<void> {
     while (queuedState) {
       const next = queuedState;
       queuedState = undefined;
-      await sendState(next.state, next.message, next.seq);
+      const delivered = await sendState(next.state, next.message, next.seq);
+      if (!delivered) {
+        if (queuedState) {
+          continue;
+        }
+        scheduleDeliveryRetry(next);
+        break;
+      }
     }
   } finally {
     sendInFlight = false;
