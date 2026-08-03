@@ -192,7 +192,9 @@ fn lookup_agent(name: &str) -> Option<Agent> {
         "cline" => Some(Agent::Cline),
         "omp" => Some(Agent::Omp),
         "mastracode" | "mastra-code" | "mastra code" => Some(Agent::Mastracode),
-        "opencode" | "opencode2" | "open-code" => Some(Agent::OpenCode),
+        "opencode" | "opencode2" | "open-code" | "opencode-next" | "shuvcode" => {
+            Some(Agent::OpenCode)
+        }
         "copilot" | "github-copilot" | "ghcs" => Some(Agent::GithubCopilot),
         "kimi" | "kimi-code" | "kimi code" => Some(Agent::Kimi),
         "kiro" | "kiro-cli" => Some(Agent::Kiro),
@@ -679,6 +681,8 @@ mod tests {
     #[test]
     fn identify_known_agents() {
         assert_eq!(identify_agent("pi"), Some(Agent::Pi));
+        assert_eq!(identify_agent("shuvcode"), Some(Agent::OpenCode));
+        assert_eq!(identify_agent("opencode-next"), Some(Agent::OpenCode));
         assert_eq!(identify_agent("claude"), Some(Agent::Claude));
         assert_eq!(identify_agent("claude-code"), Some(Agent::Claude));
         assert_eq!(identify_agent("codex"), Some(Agent::Codex));
@@ -715,6 +719,8 @@ mod tests {
     #[test]
     fn parse_known_agent_labels() {
         assert_eq!(parse_agent_label("pi"), Some(Agent::Pi));
+        assert_eq!(parse_agent_label("shuvcode"), Some(Agent::OpenCode));
+        assert_eq!(parse_agent_label("opencode-next"), Some(Agent::OpenCode));
         assert_eq!(parse_agent_label("claude"), Some(Agent::Claude));
         assert_eq!(parse_agent_label("cursor-agent"), Some(Agent::Cursor));
         assert_eq!(parse_agent_label("devin-cli"), Some(Agent::Devin));
@@ -825,9 +831,22 @@ mod tests {
     #[test]
     fn identify_case_insensitive() {
         assert_eq!(identify_agent("Pi"), Some(Agent::Pi));
+        assert_eq!(identify_agent("Shuvcode"), Some(Agent::OpenCode));
         assert_eq!(identify_agent("CLAUDE"), Some(Agent::Claude));
         assert_eq!(identify_agent("Codex"), Some(Agent::Codex));
         assert_eq!(identify_agent("Devin"), Some(Agent::Devin));
+    }
+
+    #[test]
+    fn identify_agent_in_job_detects_shuvcode_as_opencode() {
+        let job = crate::platform::ForegroundJob {
+            process_group_id: 42,
+            processes: vec![foreground_process(42, "shuvcode", &["shuvcode"])],
+        };
+        assert_eq!(
+            identify_agent_in_job(&job),
+            Some((Agent::OpenCode, "shuvcode".to_string()))
+        );
     }
 
     #[test]
