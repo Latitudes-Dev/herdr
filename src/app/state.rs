@@ -518,6 +518,28 @@ impl Palette {
         }
     }
 
+    /// Night Owl Gold — gold-forward Night Owl (shuvcode/opencode nightowl-navy-gold).
+    pub fn night_owl_gold() -> Self {
+        Self {
+            accent: Color::Rgb(243, 176, 66), // gold #f3b042
+            panel_bg: Color::Rgb(1, 22, 39),  // navyBg #011627
+            surface0: Color::Rgb(11, 37, 58), // navyPanel #0b253a
+            surface1: Color::Rgb(15, 45, 68), // navyPanelStrong #0f2d44
+            surface_dim: Color::Rgb(1, 18, 32),
+            overlay0: Color::Rgb(95, 126, 151),  // muted #5f7e97
+            overlay1: Color::Rgb(139, 173, 193), // mutedSoft #8badc1
+            text: Color::Rgb(214, 222, 235),     // cream #d6deeb
+            subtext0: Color::Rgb(139, 173, 193),
+            mauve: Color::Rgb(199, 146, 234),  // purple #c792ea
+            green: Color::Rgb(197, 228, 120),  // green #c5e478
+            yellow: Color::Rgb(236, 196, 141), // goldSoft #ecc48d
+            red: Color::Rgb(255, 88, 116),     // coral #ff5874
+            blue: Color::Rgb(130, 170, 255),   // blueAccent #82aaff
+            teal: Color::Rgb(127, 219, 202),   // cyan #7fdbca
+            peach: Color::Rgb(255, 203, 139),  // peach #ffcb8b
+        }
+    }
+
     /// Resolve a theme by name. Returns None for unknown names.
     pub fn from_name(name: &str) -> Option<Self> {
         match crate::config::canonical_theme_name(name)? {
@@ -539,6 +561,8 @@ impl Palette {
             "rose-pine" => Some(Self::rose_pine()),
             "rose-pine-dawn" => Some(Self::rose_pine_dawn()),
             "vesper" => Some(Self::vesper()),
+            "night-owl-gold" | "nightowl-gold" | "nightowl-navy-gold" | "night-owl"
+            | "nightowl" => Some(Self::night_owl_gold()),
             _ => None,
         }
     }

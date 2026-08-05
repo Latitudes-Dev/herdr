@@ -117,7 +117,7 @@ const DEFAULT_CONFIG: &str = r##"# herdr configuration
 [theme]
 # Built-in themes: catppuccin, terminal, tokyo-night, dracula, nord,
 #                  gruvbox, one-dark, solarized, kanagawa, rose-pine,
-#                  vesper
+#                  vesper, night-owl-gold
 # name = "catppuccin"
 
 # Follow host terminal light/dark appearance and switch Herdr UI themes.
