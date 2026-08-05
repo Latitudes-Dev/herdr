@@ -2,7 +2,13 @@ use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 
-use super::env::*;
+#[cfg(windows)]
+use super::env::hermes_dir;
+use super::env::{
+    antigravity_cli_dir, claude_dir, codex_dir, copilot_dir, cursor_dir, devin_dir, droid_dir,
+    grok_dir, hermes_plugin_dir, kilo_dir, kimi_dir, mastracode_dir, omp_extension_dir,
+    opencode_config_dirs, opencode_dir, pi_extension_dir, qodercli_dir,
+};
 
 pub(crate) fn integration_target_label(
     target: crate::api::schema::IntegrationTarget,
@@ -45,7 +51,7 @@ pub(crate) fn integration_target_command_names(
         crate::api::schema::IntegrationTarget::Devin => &["devin"],
         crate::api::schema::IntegrationTarget::Droid => &["droid"],
         crate::api::schema::IntegrationTarget::Kimi => &["kimi"],
-        crate::api::schema::IntegrationTarget::Opencode => &["opencode"],
+        crate::api::schema::IntegrationTarget::Opencode => &["opencode", "shuvcode", "opencode2"],
         crate::api::schema::IntegrationTarget::Kilo => &["kilo", "kilo-code"],
         crate::api::schema::IntegrationTarget::Hermes => &["hermes"],
         crate::api::schema::IntegrationTarget::Qodercli => qodercli_command_names(),
@@ -308,10 +314,7 @@ fn integration_specs() -> [(
         ),
         (
             crate::api::schema::IntegrationTarget::Opencode,
-            opencode_dir().map(|dir| {
-                dir.join("plugins")
-                    .join(super::OPENCODE_PLUGIN_INSTALL_NAME)
-            }),
+            preferred_opencode_status_path(),
             super::OPENCODE_INTEGRATION_VERSION,
         ),
         (
@@ -426,6 +429,10 @@ pub(crate) fn integration_status_at(
     path: PathBuf,
     expected_version: u32,
 ) -> super::IntegrationStatus {
+    if target == crate::api::schema::IntegrationTarget::Opencode {
+        return opencode_integration_status(path, expected_version);
+    }
+
     if !path.is_file() {
         return super::IntegrationStatus {
             target,
@@ -464,6 +471,125 @@ pub(crate) fn integration_status_at(
 
     super::IntegrationStatus {
         target,
+        path,
+        state,
+        installed_version,
+        expected_version,
+    }
+}
+
+fn preferred_opencode_status_path() -> io::Result<PathBuf> {
+    let dirs = opencode_config_dirs()?;
+    for dir in &dirs {
+        let v1 = dir
+            .join("plugins")
+            .join(super::OPENCODE_PLUGIN_INSTALL_NAME);
+        if v1.is_file() {
+            return Ok(v1);
+        }
+        let v2 = dir
+            .join("plugins")
+            .join(super::OPENCODE_V2_PLUGIN_INSTALL_NAME)
+            .join(super::OPENCODE_V2_PLUGIN_INDEX_INSTALL_NAME);
+        if v2.is_file() {
+            return Ok(v2);
+        }
+    }
+
+    if let Some(primary) = dirs.into_iter().next() {
+        return Ok(primary
+            .join("plugins")
+            .join(super::OPENCODE_PLUGIN_INSTALL_NAME));
+    }
+    opencode_dir().map(|dir| {
+        dir.join("plugins")
+            .join(super::OPENCODE_PLUGIN_INSTALL_NAME)
+    })
+}
+
+fn opencode_integration_status(path: PathBuf, expected_version: u32) -> super::IntegrationStatus {
+    let Ok(dirs) = opencode_config_dirs() else {
+        return super::IntegrationStatus {
+            target: crate::api::schema::IntegrationTarget::Opencode,
+            path,
+            state: super::IntegrationStatusKind::NotInstalled,
+            installed_version: None,
+            expected_version,
+        };
+    };
+
+    let existing_dirs: Vec<_> = dirs.into_iter().filter(|dir| dir.is_dir()).collect();
+    if existing_dirs.is_empty() {
+        return super::IntegrationStatus {
+            target: crate::api::schema::IntegrationTarget::Opencode,
+            path,
+            state: super::IntegrationStatusKind::NotInstalled,
+            installed_version: None,
+            expected_version,
+        };
+    }
+
+    let mut versions = Vec::new();
+    let mut any_install = false;
+    let mut all_complete = true;
+
+    for dir in &existing_dirs {
+        let v1 = dir
+            .join("plugins")
+            .join(super::OPENCODE_PLUGIN_INSTALL_NAME);
+        let v2 = dir
+            .join("plugins")
+            .join(super::OPENCODE_V2_PLUGIN_INSTALL_NAME)
+            .join(super::OPENCODE_V2_PLUGIN_INDEX_INSTALL_NAME);
+        let tui = dir.join(super::OPENCODE_TUI_PLUGIN_INSTALL_NAME);
+
+        let v1_version = fs::read_to_string(&v1)
+            .ok()
+            .and_then(|content| parse_integration_version(&content));
+        let v2_version = fs::read_to_string(&v2)
+            .ok()
+            .and_then(|content| parse_integration_version(&content));
+        let tui_version = fs::read_to_string(&tui)
+            .ok()
+            .and_then(|content| parse_integration_version(&content));
+        let tui_configured =
+            super::opencode_config::tui_plugin_is_configured(dir, super::OPENCODE_TUI_PLUGIN_SPEC);
+
+        if v1_version.is_some()
+            || v2_version.is_some()
+            || tui_version.is_some()
+            || v1.is_file()
+            || v2.is_file()
+            || tui.is_file()
+        {
+            any_install = true;
+        }
+        if v1_version.is_none() || v2_version.is_none() || tui_version.is_none() || !tui_configured
+        {
+            all_complete = false;
+        }
+        if let Some(version) = v1_version {
+            versions.push(version);
+        }
+        if let Some(version) = v2_version {
+            versions.push(version);
+        }
+        if let Some(version) = tui_version {
+            versions.push(version);
+        }
+    }
+
+    let installed_version = versions.iter().copied().min();
+    let state = if !any_install {
+        super::IntegrationStatusKind::NotInstalled
+    } else if all_complete && installed_version.is_some_and(|version| version >= expected_version) {
+        super::IntegrationStatusKind::Current
+    } else {
+        super::IntegrationStatusKind::Outdated
+    };
+
+    super::IntegrationStatus {
+        target: crate::api::schema::IntegrationTarget::Opencode,
         path,
         state,
         installed_version,

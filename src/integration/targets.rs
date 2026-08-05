@@ -20,7 +20,7 @@ use super::config_edit::{
 use super::env::{
     antigravity_cli_dir, claude_dir, codex_dir, copilot_dir, cursor_dir, devin_dir, droid_dir,
     grok_dir, hermes_dir, hermes_plugin_dir, kilo_dir, kimi_dir, mastracode_dir, omp_extension_dir,
-    opencode_dir, pi_extension_dir, qodercli_dir,
+    opencode_config_dirs, pi_extension_dir, qodercli_dir,
 };
 use super::file_ops::{
     make_executable, remove_dir_all_if_exists, remove_file_if_exists, remove_legacy_bash_hook_file,
@@ -53,8 +53,13 @@ use super::{
     MASTRACODE_HOOK_INSTALL_NAME, MASTRACODE_HOOK_TIMEOUT_MS, MASTRACODE_REMOVED_HOOK_EVENTS,
     OMP_EXTENSION_ASSET, OMP_EXTENSION_INSTALL_NAME, OPENCODE_PLUGIN_ASSET,
     OPENCODE_PLUGIN_INSTALL_NAME, OPENCODE_TUI_PLUGIN_ASSET, OPENCODE_TUI_PLUGIN_INSTALL_NAME,
-    OPENCODE_TUI_PLUGIN_SPEC, PI_EXTENSION_ASSET, PI_EXTENSION_INSTALL_NAME, QODERCLI_HOOK_ASSET,
-    QODERCLI_HOOK_EVENTS, QODERCLI_HOOK_INSTALL_NAME, QODERCLI_REMOVED_LIFECYCLE_HOOK_EVENTS,
+    OPENCODE_TUI_PLUGIN_SPEC, OPENCODE_V2_PLUGIN_INDEX_ASSET,
+    OPENCODE_V2_PLUGIN_INDEX_INSTALL_NAME, OPENCODE_V2_PLUGIN_INSTALL_NAME,
+    OPENCODE_V2_PLUGIN_PACKAGE_ASSET, OPENCODE_V2_PLUGIN_PACKAGE_INSTALL_NAME,
+    OPENCODE_V2_PLUGIN_SOCKET_ASSET, OPENCODE_V2_PLUGIN_SOCKET_INSTALL_NAME,
+    OPENCODE_V2_PLUGIN_STATE_ASSET, OPENCODE_V2_PLUGIN_STATE_INSTALL_NAME, PI_EXTENSION_ASSET,
+    PI_EXTENSION_INSTALL_NAME, QODERCLI_HOOK_ASSET, QODERCLI_HOOK_EVENTS,
+    QODERCLI_HOOK_INSTALL_NAME, QODERCLI_REMOVED_LIFECYCLE_HOOK_EVENTS,
 };
 
 fn ensure_extension_dir(dir: &Path, agent: &str) -> io::Result<()> {
@@ -447,29 +452,65 @@ pub(crate) fn install_droid() -> io::Result<DroidInstallPaths> {
 }
 
 pub(crate) fn install_opencode() -> io::Result<OpenCodeInstallPaths> {
-    let dir = opencode_dir()?;
-    if !dir.is_dir() {
-        return Err(io::Error::other(format!(
-            "opencode config directory not found at {}. install opencode first",
-            dir.display()
-        )));
+    let dirs = existing_opencode_config_dirs()?;
+    if dirs.is_empty() {
+        return Err(io::Error::other(
+            "opencode/shuvcode config directory not found under ~/.config/opencode or ~/.config/shuvcode. install opencode or shuvcode first",
+        ));
     }
 
-    validate_tui_plugin_config(&dir)?;
-    let plugins_dir = dir.join("plugins");
-    fs::create_dir_all(&plugins_dir)?;
+    let mut plugin_paths = Vec::new();
+    let mut v2_plugin_dirs = Vec::new();
+    let mut tui_plugin_paths = Vec::new();
+    let mut tui_config_paths = Vec::new();
+    for dir in dirs {
+        validate_tui_plugin_config(&dir)?;
+        let plugins_dir = dir.join("plugins");
+        fs::create_dir_all(&plugins_dir)?;
 
-    let plugin_path = plugins_dir.join(OPENCODE_PLUGIN_INSTALL_NAME);
-    fs::write(&plugin_path, OPENCODE_PLUGIN_ASSET)?;
-    let tui_plugin_path = dir.join(OPENCODE_TUI_PLUGIN_INSTALL_NAME);
-    fs::write(&tui_plugin_path, OPENCODE_TUI_PLUGIN_ASSET)?;
-    let tui_config_path = add_tui_plugin(&dir, OPENCODE_TUI_PLUGIN_SPEC)?;
+        let plugin_path = plugins_dir.join(OPENCODE_PLUGIN_INSTALL_NAME);
+        fs::write(&plugin_path, OPENCODE_PLUGIN_ASSET)?;
+        plugin_paths.push(plugin_path);
+
+        let v2_dir = plugins_dir.join(OPENCODE_V2_PLUGIN_INSTALL_NAME);
+        fs::create_dir_all(&v2_dir)?;
+        fs::write(
+            v2_dir.join(OPENCODE_V2_PLUGIN_INDEX_INSTALL_NAME),
+            OPENCODE_V2_PLUGIN_INDEX_ASSET,
+        )?;
+        fs::write(
+            v2_dir.join(OPENCODE_V2_PLUGIN_SOCKET_INSTALL_NAME),
+            OPENCODE_V2_PLUGIN_SOCKET_ASSET,
+        )?;
+        fs::write(
+            v2_dir.join(OPENCODE_V2_PLUGIN_STATE_INSTALL_NAME),
+            OPENCODE_V2_PLUGIN_STATE_ASSET,
+        )?;
+        fs::write(
+            v2_dir.join(OPENCODE_V2_PLUGIN_PACKAGE_INSTALL_NAME),
+            OPENCODE_V2_PLUGIN_PACKAGE_ASSET,
+        )?;
+        v2_plugin_dirs.push(v2_dir);
+
+        let tui_plugin_path = dir.join(OPENCODE_TUI_PLUGIN_INSTALL_NAME);
+        fs::write(&tui_plugin_path, OPENCODE_TUI_PLUGIN_ASSET)?;
+        tui_plugin_paths.push(tui_plugin_path);
+        tui_config_paths.push(add_tui_plugin(&dir, OPENCODE_TUI_PLUGIN_SPEC)?);
+    }
 
     Ok(OpenCodeInstallPaths {
-        plugin_path,
-        tui_plugin_path,
-        tui_config_path,
+        plugin_paths,
+        v2_plugin_dirs,
+        tui_plugin_paths,
+        tui_config_paths,
     })
+}
+
+fn existing_opencode_config_dirs() -> io::Result<Vec<PathBuf>> {
+    Ok(opencode_config_dirs()?
+        .into_iter()
+        .filter(|dir| dir.is_dir())
+        .collect())
 }
 
 pub(crate) fn install_kilo() -> io::Result<KiloInstallPaths> {
@@ -812,38 +853,67 @@ pub(crate) fn uninstall_droid() -> io::Result<DroidUninstallResult> {
 }
 
 pub(crate) fn uninstall_opencode() -> io::Result<OpenCodeUninstallResult> {
-    let dir = opencode_dir()?;
-    let tui_config_path = tui_config_path(&dir);
-    let plugin_path = dir.join("plugins").join(OPENCODE_PLUGIN_INSTALL_NAME);
-    let tui_plugin_path = dir.join(OPENCODE_TUI_PLUGIN_INSTALL_NAME);
     let mut errors = Vec::new();
-    let updated_tui_config =
-        remove_tui_plugin(&dir, OPENCODE_TUI_PLUGIN_SPEC).unwrap_or_else(|err| {
-            errors.push(err.to_string());
-            false
-        });
-    let removed_plugin = remove_file_if_exists(&plugin_path).unwrap_or_else(|err| {
-        errors.push(format!("failed to remove {}: {err}", plugin_path.display()));
-        false
-    });
-    let removed_tui_plugin = remove_file_if_exists(&tui_plugin_path).unwrap_or_else(|err| {
-        errors.push(format!(
-            "failed to remove {}: {err}",
-            tui_plugin_path.display()
-        ));
-        false
-    });
+    let mut plugin_paths = Vec::new();
+    let mut removed_plugins = Vec::new();
+    let mut v2_plugin_dirs = Vec::new();
+    let mut removed_v2_plugin_dirs = Vec::new();
+    let mut tui_plugin_paths = Vec::new();
+    let mut removed_tui_plugins = Vec::new();
+    let mut tui_config_paths = Vec::new();
+    let mut updated_tui_configs = Vec::new();
+
+    for dir in opencode_config_dirs()? {
+        let plugins_dir = dir.join("plugins");
+        let plugin_path = plugins_dir.join(OPENCODE_PLUGIN_INSTALL_NAME);
+        match remove_file_if_exists(&plugin_path) {
+            Ok(true) => removed_plugins.push(plugin_path.clone()),
+            Ok(false) => {}
+            Err(err) => errors.push(format!("failed to remove {}: {err}", plugin_path.display())),
+        }
+        plugin_paths.push(plugin_path);
+
+        let v2_dir = plugins_dir.join(OPENCODE_V2_PLUGIN_INSTALL_NAME);
+        match remove_dir_all_if_exists(&v2_dir) {
+            Ok(true) => removed_v2_plugin_dirs.push(v2_dir.clone()),
+            Ok(false) => {}
+            Err(err) => errors.push(format!("failed to remove {}: {err}", v2_dir.display())),
+        }
+        v2_plugin_dirs.push(v2_dir);
+
+        let tui_plugin_path = dir.join(OPENCODE_TUI_PLUGIN_INSTALL_NAME);
+        match remove_file_if_exists(&tui_plugin_path) {
+            Ok(true) => removed_tui_plugins.push(tui_plugin_path.clone()),
+            Ok(false) => {}
+            Err(err) => errors.push(format!(
+                "failed to remove {}: {err}",
+                tui_plugin_path.display()
+            )),
+        }
+        tui_plugin_paths.push(tui_plugin_path);
+
+        let config_path = tui_config_path(&dir);
+        match remove_tui_plugin(&dir, OPENCODE_TUI_PLUGIN_SPEC) {
+            Ok(true) => updated_tui_configs.push(config_path.clone()),
+            Ok(false) => {}
+            Err(err) => errors.push(err.to_string()),
+        }
+        tui_config_paths.push(config_path);
+    }
+
     if !errors.is_empty() {
         return Err(io::Error::other(errors.join("; ")));
     }
 
     Ok(OpenCodeUninstallResult {
-        plugin_path,
-        tui_plugin_path,
-        tui_config_path,
-        removed_plugin,
-        removed_tui_plugin,
-        updated_tui_config,
+        plugin_paths,
+        removed_plugins,
+        v2_plugin_dirs,
+        removed_v2_plugin_dirs,
+        tui_plugin_paths,
+        removed_tui_plugins,
+        tui_config_paths,
+        updated_tui_configs,
     })
 }
 

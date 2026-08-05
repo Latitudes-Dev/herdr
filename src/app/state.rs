@@ -523,6 +523,7 @@ impl Palette {
         Self {
             accent: Color::Rgb(243, 176, 66), // gold #f3b042
             panel_bg: Color::Rgb(1, 22, 39),  // navyBg #011627
+            sidebar_bg: Color::Reset,
             surface0: Color::Rgb(11, 37, 58), // navyPanel #0b253a
             surface1: Color::Rgb(15, 45, 68), // navyPanelStrong #0f2d44
             surface_dim: Color::Rgb(1, 18, 32),
@@ -561,8 +562,7 @@ impl Palette {
             "rose-pine" => Some(Self::rose_pine()),
             "rose-pine-dawn" => Some(Self::rose_pine_dawn()),
             "vesper" => Some(Self::vesper()),
-            "night-owl-gold" | "nightowl-gold" | "nightowl-navy-gold" | "night-owl"
-            | "nightowl" => Some(Self::night_owl_gold()),
+            "night-owl-gold" => Some(Self::night_owl_gold()),
             _ => None,
         }
     }

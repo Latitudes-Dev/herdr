@@ -117,8 +117,35 @@ pub(crate) fn expand_tilde_path(path: PathBuf) -> io::Result<PathBuf> {
     Ok(path)
 }
 
+pub(crate) const OPENCODE_CONFIG_DIR_ENV_VAR: &str = "OPENCODE_CONFIG_DIR";
+
 pub(crate) fn opencode_dir() -> io::Result<PathBuf> {
-    Ok(home_dir()?.join(".config/opencode"))
+    config_dir_from_env_or_home(OPENCODE_CONFIG_DIR_ENV_VAR, &[".config", "opencode"])
+}
+
+/// Config roots that host OpenCode-compatible agents.
+///
+/// Stock OpenCode uses `~/.config/opencode` (or `OPENCODE_CONFIG_DIR`). The
+/// isolated shuvcode fork uses `~/.config/shuvcode`. Install into every root
+/// that already exists so both hosts pick up the same herdr plugin package.
+pub(crate) fn opencode_config_dirs() -> io::Result<Vec<PathBuf>> {
+    let mut dirs = Vec::new();
+    let mut push_unique = |path: PathBuf| {
+        if !dirs.iter().any(|existing| existing == &path) {
+            dirs.push(path);
+        }
+    };
+
+    if let Some(value) =
+        std::env::var_os(OPENCODE_CONFIG_DIR_ENV_VAR).filter(|value| !value.is_empty())
+    {
+        push_unique(expand_tilde_path(PathBuf::from(value))?);
+    }
+
+    let home = home_dir()?;
+    push_unique(home.join(".config").join("opencode"));
+    push_unique(home.join(".config").join("shuvcode"));
+    Ok(dirs)
 }
 
 pub(crate) fn kilo_dir() -> io::Result<PathBuf> {

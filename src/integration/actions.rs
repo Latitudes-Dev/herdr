@@ -142,23 +142,7 @@ fn install_target_inner(target: crate::api::schema::IntegrationTarget) -> io::Re
             }
             messages
         }
-        crate::api::schema::IntegrationTarget::Opencode => {
-            let installed = install_opencode()?;
-            vec![
-                format!(
-                    "installed opencode integration plugin to {}",
-                    installed.plugin_path.display()
-                ),
-                format!(
-                    "installed opencode tui integration plugin to {}",
-                    installed.tui_plugin_path.display()
-                ),
-                format!(
-                    "ensured opencode tui plugin config at {}",
-                    installed.tui_config_path.display()
-                ),
-            ]
-        }
+        crate::api::schema::IntegrationTarget::Opencode => install_opencode_messages()?,
         crate::api::schema::IntegrationTarget::Kilo => {
             let installed = install_kilo()?;
             vec![format!(
@@ -247,6 +231,86 @@ fn install_target_inner(target: crate::api::schema::IntegrationTarget) -> io::Re
         messages.push(warning);
     }
 
+    Ok(messages)
+}
+
+fn install_opencode_messages() -> io::Result<Vec<String>> {
+    let installed = install_opencode()?;
+    let mut messages = installed
+        .plugin_paths
+        .iter()
+        .map(|path| {
+            format!(
+                "installed opencode v1 integration plugin to {}",
+                path.display()
+            )
+        })
+        .collect::<Vec<_>>();
+    messages.extend(installed.v2_plugin_dirs.iter().map(|path| {
+        format!(
+            "installed opencode/shuvcode v2 integration plugin to {}",
+            path.display()
+        )
+    }));
+    messages.extend(installed.tui_plugin_paths.iter().map(|path| {
+        format!(
+            "installed opencode tui integration plugin to {}",
+            path.display()
+        )
+    }));
+    messages.extend(
+        installed
+            .tui_config_paths
+            .iter()
+            .map(|path| format!("ensured opencode tui plugin config at {}", path.display())),
+    );
+    Ok(messages)
+}
+
+fn uninstall_opencode_messages() -> io::Result<Vec<String>> {
+    let result = uninstall_opencode()?;
+    let mut messages = result
+        .removed_plugins
+        .iter()
+        .map(|path| {
+            format!(
+                "removed opencode v1 integration plugin at {}",
+                path.display()
+            )
+        })
+        .collect::<Vec<_>>();
+    messages.extend(result.removed_v2_plugin_dirs.iter().map(|path| {
+        format!(
+            "removed opencode/shuvcode v2 integration plugin at {}",
+            path.display()
+        )
+    }));
+    messages.extend(result.removed_tui_plugins.iter().map(|path| {
+        format!(
+            "removed opencode tui integration plugin at {}",
+            path.display()
+        )
+    }));
+    messages.extend(result.updated_tui_configs.iter().map(|path| {
+        format!(
+            "removed herdr opencode plugin entry from {}",
+            path.display()
+        )
+    }));
+    if messages.is_empty() {
+        let searched = result
+            .plugin_paths
+            .iter()
+            .chain(result.v2_plugin_dirs.iter())
+            .chain(result.tui_plugin_paths.iter())
+            .chain(result.tui_config_paths.iter())
+            .map(|path| path.display().to_string())
+            .collect::<Vec<_>>()
+            .join(", ");
+        messages.push(format!(
+            "no opencode/shuvcode integration plugin found under {searched}"
+        ));
+    }
     Ok(messages)
 }
 
@@ -459,38 +523,7 @@ pub(crate) fn uninstall_target(
             }
             messages
         }
-        crate::api::schema::IntegrationTarget::Opencode => {
-            let result = uninstall_opencode()?;
-            let mut messages = vec![if result.removed_plugin {
-                format!(
-                    "removed opencode integration plugin at {}",
-                    result.plugin_path.display()
-                )
-            } else {
-                format!(
-                    "no opencode integration plugin found at {}",
-                    result.plugin_path.display()
-                )
-            }];
-            messages.push(if result.removed_tui_plugin {
-                format!(
-                    "removed opencode tui integration plugin at {}",
-                    result.tui_plugin_path.display()
-                )
-            } else {
-                format!(
-                    "no opencode tui integration plugin found at {}",
-                    result.tui_plugin_path.display()
-                )
-            });
-            if result.updated_tui_config {
-                messages.push(format!(
-                    "removed herdr opencode plugin entry from {}",
-                    result.tui_config_path.display()
-                ));
-            }
-            messages
-        }
+        crate::api::schema::IntegrationTarget::Opencode => uninstall_opencode_messages()?,
         crate::api::schema::IntegrationTarget::Kilo => {
             let result = uninstall_kilo()?;
             if result.removed_plugin {
