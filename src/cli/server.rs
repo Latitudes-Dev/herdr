@@ -194,12 +194,30 @@ fn print_agent_manifest_status(response: &serde_json::Value) {
 }
 
 fn server_live_handoff(args: &[String]) -> std::io::Result<i32> {
-    let Some(params) = parse_live_handoff_params(args) else {
+    let Some(mut params) = parse_live_handoff_params(args) else {
         eprintln!(
             "usage: herdr server live-handoff [--import-exe <path>] [--expected-protocol <n>] [--expected-version <version>]"
         );
         return Ok(2);
     };
+    if params.import_exe.is_none() {
+        let current_exe = std::env::current_exe().map_err(|err| {
+            std::io::Error::new(
+                err.kind(),
+                format!("failed to determine invoking herdr executable path: {err}"),
+            )
+        })?;
+        let import_exe = current_exe.to_str().ok_or_else(|| {
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!(
+                    "invoking herdr executable path is not valid UTF-8: {}",
+                    current_exe.display()
+                ),
+            )
+        })?;
+        params.import_exe = Some(import_exe.to_string());
+    }
 
     // Live handoff is itself a protocol-mismatch recovery path, so it must
     // reach the running server without the normal CLI compatibility guard.

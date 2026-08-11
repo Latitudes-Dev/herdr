@@ -3,6 +3,50 @@ use std::fs;
 use std::path::PathBuf;
 use std::process::Command;
 
+// Keep this pin aligned with vendor/libghostty-vt/build.zig.zon and release CI.
+const REQUIRED_ZIG_VERSION: &str = "0.15.2";
+
+fn zig_remediation() -> String {
+    format!(
+        "Set the ZIG environment variable to an absolute Zig {REQUIRED_ZIG_VERSION} executable (PowerShell: `$env:ZIG = 'C:\\\\path\\\\to\\\\zig.exe'`), or run the command through `nix develop -c` where available."
+    )
+}
+
+fn resolve_zig() -> String {
+    let configured = env::var("ZIG").ok();
+    let zig = configured.as_deref().unwrap_or("zig");
+    let output = Command::new(zig).arg("version").output().unwrap_or_else(|err| {
+        let remediation = zig_remediation();
+        panic!(
+            "failed to run `{zig} version`: {err}; Herdr requires Zig {REQUIRED_ZIG_VERSION}. {remediation}"
+        )
+    });
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        let detail = if stderr.is_empty() {
+            String::new()
+        } else {
+            format!(": {stderr}")
+        };
+        let remediation = zig_remediation();
+        panic!(
+            "`{zig} version` failed with {}{detail}; Herdr requires Zig {REQUIRED_ZIG_VERSION}. {remediation}",
+            output.status
+        );
+    }
+
+    let version = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if version != REQUIRED_ZIG_VERSION {
+        let source = if configured.is_some() { "ZIG" } else { "PATH" };
+        let remediation = zig_remediation();
+        panic!(
+            "Herdr requires Zig {REQUIRED_ZIG_VERSION}, but {source} resolved `{zig}` to Zig {version}. {remediation}"
+        );
+    }
+
+    zig.to_string()
+}
+
 fn zig_target(target: &str) -> &str {
     match target {
         "x86_64-unknown-linux-gnu" => "x86_64-linux-gnu",
@@ -87,7 +131,7 @@ fn main() {
         .trim()
         .to_string();
 
-    let zig = env::var("ZIG").unwrap_or_else(|_| "zig".into());
+    let zig = resolve_zig();
     let mut command = Command::new(zig);
     command
         .arg("build")

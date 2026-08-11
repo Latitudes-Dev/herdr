@@ -62,7 +62,7 @@ fn cli_allows_same_protocol_different_version_and_preserves_server_error() {
 }
 
 #[test]
-fn server_live_handoff_bypasses_protocol_guard() {
+fn server_live_handoff_bypasses_protocol_guard_and_imports_invoking_binary() {
     let base = unique_test_dir();
     fs::create_dir_all(&base).unwrap();
     let socket_path = base.join("herdr.sock");
@@ -76,6 +76,13 @@ fn server_live_handoff_bypasses_protocol_guard() {
             .unwrap();
         let request: serde_json::Value = serde_json::from_str(&line).unwrap();
         assert_eq!(request["method"], "server.live_handoff");
+        let import_exe = request["params"]["import_exe"]
+            .as_str()
+            .expect("live handoff should import the invoking CLI binary");
+        assert_eq!(
+            fs::canonicalize(import_exe).unwrap(),
+            fs::canonicalize(env!("CARGO_BIN_EXE_herdr")).unwrap()
+        );
         stream
             .write_all(br#"{"id":"cli:server:live-handoff","result":{"type":"ok"}}"#)
             .unwrap();
