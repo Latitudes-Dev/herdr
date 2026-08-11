@@ -168,7 +168,8 @@ const DROID_REMOVED_LIFECYCLE_HOOK_EVENTS: [(&str, &str); 9] = [
     ("PreCompact", "working"),
     ("SessionEnd", "release"),
 ];
-const OPENCODE_PLUGIN_INSTALL_NAME: &str = "herdr-agent-state.js";
+const OPENCODE_PLUGIN_INSTALL_NAME: &str = "herdr-agent-state-v1.js";
+const OPENCODE_LEGACY_PLUGIN_INSTALL_NAME: &str = "herdr-agent-state.js";
 const OPENCODE_PLUGIN_ASSET: &str = include_str!("assets/opencode/herdr-agent-state.js");
 const OPENCODE_TUI_PLUGIN_INSTALL_NAME: &str = "herdr-tui-session.js";
 const OPENCODE_TUI_PLUGIN_SPEC: &str = "./herdr-tui-session.js";

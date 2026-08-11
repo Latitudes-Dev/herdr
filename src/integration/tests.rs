@@ -2513,6 +2513,58 @@ fn install_opencode_writes_to_opencode_and_shuvcode_roots() {
 }
 
 #[test]
+fn install_opencode_removes_the_managed_v1_file_that_shadows_the_v2_package() {
+    let _lock = integration_env_lock();
+    let base = unique_base();
+    let home = base.join("home");
+    let opencode_dir = home.join(".config/opencode");
+    let plugins_dir = opencode_dir.join("plugins");
+    fs::create_dir_all(&plugins_dir).unwrap();
+    let legacy_path = plugins_dir.join(OPENCODE_LEGACY_PLUGIN_INSTALL_NAME);
+    fs::write(&legacy_path, OPENCODE_PLUGIN_ASSET).unwrap();
+    std::env::set_var("HOME", &home);
+    std::env::remove_var("OPENCODE_CONFIG_DIR");
+
+    let installed = install_opencode().unwrap();
+
+    assert!(!legacy_path.exists());
+    assert!(installed.plugin_paths[0].is_file());
+    assert_ne!(
+        installed.plugin_paths[0].file_stem(),
+        installed.v2_plugin_dirs[0].file_name()
+    );
+
+    std::env::remove_var("HOME");
+    let _ = fs::remove_dir_all(base);
+}
+
+#[test]
+fn install_opencode_preserves_an_unmanaged_file_at_the_legacy_path() {
+    let _lock = integration_env_lock();
+    let base = unique_base();
+    let home = base.join("home");
+    let opencode_dir = home.join(".config/opencode");
+    let plugins_dir = opencode_dir.join("plugins");
+    fs::create_dir_all(&plugins_dir).unwrap();
+    let legacy_path = plugins_dir.join(OPENCODE_LEGACY_PLUGIN_INSTALL_NAME);
+    fs::write(&legacy_path, "export const custom = true;\n").unwrap();
+    std::env::set_var("HOME", &home);
+    std::env::remove_var("OPENCODE_CONFIG_DIR");
+
+    let error = install_opencode().unwrap_err().to_string();
+
+    assert!(error.contains("shadows the Herdr v2 package"));
+    assert_eq!(
+        fs::read_to_string(&legacy_path).unwrap(),
+        "export const custom = true;\n"
+    );
+    assert!(!plugins_dir.join(OPENCODE_PLUGIN_INSTALL_NAME).exists());
+
+    std::env::remove_var("HOME");
+    let _ = fs::remove_dir_all(base);
+}
+
+#[test]
 fn opencode_status_requires_the_tui_plugin_and_config_entry() {
     let _lock = integration_env_lock();
     let base = unique_base();

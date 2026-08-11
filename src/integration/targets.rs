@@ -51,9 +51,9 @@ use super::{
     HERMES_PLUGIN_MANIFEST_INSTALL_NAME, KILO_PLUGIN_ASSET, KILO_PLUGIN_INSTALL_NAME,
     KIMI_HOOK_ASSET, KIMI_HOOK_INSTALL_NAME, MASTRACODE_HOOK_ASSET, MASTRACODE_HOOK_EVENTS,
     MASTRACODE_HOOK_INSTALL_NAME, MASTRACODE_HOOK_TIMEOUT_MS, MASTRACODE_REMOVED_HOOK_EVENTS,
-    OMP_EXTENSION_ASSET, OMP_EXTENSION_INSTALL_NAME, OPENCODE_PLUGIN_ASSET,
-    OPENCODE_PLUGIN_INSTALL_NAME, OPENCODE_TUI_PLUGIN_ASSET, OPENCODE_TUI_PLUGIN_INSTALL_NAME,
-    OPENCODE_TUI_PLUGIN_SPEC, OPENCODE_V2_PLUGIN_INDEX_ASSET,
+    OMP_EXTENSION_ASSET, OMP_EXTENSION_INSTALL_NAME, OPENCODE_LEGACY_PLUGIN_INSTALL_NAME,
+    OPENCODE_PLUGIN_ASSET, OPENCODE_PLUGIN_INSTALL_NAME, OPENCODE_TUI_PLUGIN_ASSET,
+    OPENCODE_TUI_PLUGIN_INSTALL_NAME, OPENCODE_TUI_PLUGIN_SPEC, OPENCODE_V2_PLUGIN_INDEX_ASSET,
     OPENCODE_V2_PLUGIN_INDEX_INSTALL_NAME, OPENCODE_V2_PLUGIN_INSTALL_NAME,
     OPENCODE_V2_PLUGIN_PACKAGE_ASSET, OPENCODE_V2_PLUGIN_PACKAGE_INSTALL_NAME,
     OPENCODE_V2_PLUGIN_SOCKET_ASSET, OPENCODE_V2_PLUGIN_SOCKET_INSTALL_NAME,
@@ -468,14 +468,19 @@ pub(crate) fn install_opencode() -> io::Result<OpenCodeInstallPaths> {
         ));
     }
 
+    for dir in &dirs {
+        validate_tui_plugin_config(dir)?;
+        validate_legacy_opencode_plugin(&dir.join("plugins"))?;
+    }
+
     let mut plugin_paths = Vec::new();
     let mut v2_plugin_dirs = Vec::new();
     let mut tui_plugin_paths = Vec::new();
     let mut tui_config_paths = Vec::new();
     for dir in dirs {
-        validate_tui_plugin_config(&dir)?;
         let plugins_dir = dir.join("plugins");
         fs::create_dir_all(&plugins_dir)?;
+        remove_legacy_opencode_plugin(&plugins_dir, true)?;
 
         let plugin_path = plugins_dir.join(OPENCODE_PLUGIN_INSTALL_NAME);
         fs::write(&plugin_path, OPENCODE_PLUGIN_ASSET)?;
@@ -513,6 +518,44 @@ pub(crate) fn install_opencode() -> io::Result<OpenCodeInstallPaths> {
         tui_plugin_paths,
         tui_config_paths,
     })
+}
+
+fn validate_legacy_opencode_plugin(plugins_dir: &Path) -> io::Result<()> {
+    let path = plugins_dir.join(OPENCODE_LEGACY_PLUGIN_INSTALL_NAME);
+    if !path.is_file() {
+        return Ok(());
+    }
+    let content = fs::read_to_string(&path)?;
+    let integration_id = content.lines().find_map(|line| {
+        line.trim()
+            .trim_start_matches('/')
+            .trim_start_matches('#')
+            .trim()
+            .strip_prefix(super::INTEGRATION_ID_MARKER)
+            .map(str::trim)
+    });
+    if integration_id == Some("opencode") {
+        return Ok(());
+    }
+    Err(io::Error::other(format!(
+        "legacy OpenCode plugin path at {} shadows the Herdr v2 package but is not managed by Herdr; move or remove it before installing",
+        path.display()
+    )))
+}
+
+fn remove_legacy_opencode_plugin(plugins_dir: &Path, reject_unmanaged: bool) -> io::Result<bool> {
+    let path = plugins_dir.join(OPENCODE_LEGACY_PLUGIN_INSTALL_NAME);
+    if !path.is_file() {
+        return Ok(false);
+    }
+    if let Err(err) = validate_legacy_opencode_plugin(plugins_dir) {
+        if reject_unmanaged {
+            return Err(err);
+        }
+        return Ok(false);
+    }
+    fs::remove_file(path)?;
+    Ok(true)
 }
 
 fn existing_opencode_config_dirs() -> io::Result<Vec<PathBuf>> {
@@ -893,6 +936,13 @@ pub(crate) fn uninstall_opencode() -> io::Result<OpenCodeUninstallResult> {
             Err(err) => errors.push(format!("failed to remove {}: {err}", plugin_path.display())),
         }
         plugin_paths.push(plugin_path);
+
+        let legacy_plugin_path = plugins_dir.join(OPENCODE_LEGACY_PLUGIN_INSTALL_NAME);
+        match remove_legacy_opencode_plugin(&plugins_dir, false) {
+            Ok(true) => removed_plugins.push(legacy_plugin_path),
+            Ok(false) => {}
+            Err(err) => errors.push(err.to_string()),
+        }
 
         let v2_dir = plugins_dir.join(OPENCODE_V2_PLUGIN_INSTALL_NAME);
         match remove_dir_all_if_exists(&v2_dir) {
