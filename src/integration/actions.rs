@@ -5,10 +5,10 @@ use super::targets::{
     install_antigravity_cli, install_claude, install_codex, install_copilot, install_cursor,
     install_devin, install_droid, install_grok, install_hermes, install_kilo, install_kimi,
     install_mastracode, install_omp, install_opencode, install_pi, install_qodercli,
-    uninstall_antigravity_cli, uninstall_claude, uninstall_codex, uninstall_copilot,
-    uninstall_cursor, uninstall_devin, uninstall_droid, uninstall_grok, uninstall_hermes,
-    uninstall_kilo, uninstall_kimi, uninstall_mastracode, uninstall_omp, uninstall_opencode,
-    uninstall_pi, uninstall_qodercli,
+    install_shuvpi, uninstall_antigravity_cli, uninstall_claude, uninstall_codex,
+    uninstall_copilot, uninstall_cursor, uninstall_devin, uninstall_droid, uninstall_grok,
+    uninstall_hermes, uninstall_kilo, uninstall_kimi, uninstall_mastracode, uninstall_omp,
+    uninstall_opencode, uninstall_pi, uninstall_qodercli, uninstall_shuvpi,
 };
 use super::version::{agent_version_requirement, enforce_agent_version};
 use super::{KIMI_MIN_VERSION, PI_EXTENSION_INSTALL_NAME};
@@ -39,6 +39,13 @@ fn install_target_inner(target: crate::api::schema::IntegrationTarget) -> io::Re
         crate::api::schema::IntegrationTarget::Pi => {
             let path = install_pi()?;
             vec![format!("installed pi integration to {}", path.display())]
+        }
+        crate::api::schema::IntegrationTarget::Shuvpi => {
+            let path = install_shuvpi()?;
+            vec![format!(
+                "installed shuvpi integration to {}",
+                path.display()
+            )]
         }
         crate::api::schema::IntegrationTarget::Omp => {
             let installed = install_omp()?;
@@ -328,6 +335,20 @@ pub(crate) fn uninstall_target(
             } else {
                 vec![format!(
                     "no pi integration extension found at {}",
+                    result.extension_path.display()
+                )]
+            }
+        }
+        crate::api::schema::IntegrationTarget::Shuvpi => {
+            let result = uninstall_shuvpi()?;
+            if result.removed_extension {
+                vec![format!(
+                    "removed shuvpi integration extension at {}",
+                    result.extension_path.display()
+                )]
+            } else {
+                vec![format!(
+                    "no shuvpi integration extension found at {}",
                     result.extension_path.display()
                 )]
             }

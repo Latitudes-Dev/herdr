@@ -895,8 +895,10 @@ impl TerminalState {
                 .as_ref()
                 .is_none_or(|incoming| incoming == anchored)
         });
-        let opencode_cross_talk = (source, agent_label) == ("herdr:opencode", "opencode")
-            && process_present
+        let opencode_cross_talk = matches!(
+            (source, agent_label),
+            ("herdr:opencode", "opencode") | ("herdr:shuvcode", "shuvcode")
+        ) && process_present
             && anchored_session_ref
                 .zip(session_ref.as_ref())
                 .is_some_and(|(anchored, incoming)| anchored != incoming);
@@ -1328,7 +1330,13 @@ impl TerminalState {
             ) | ("herdr:mastracode", "mastracode", Some("startup"))
                 | ("herdr:hermes", "hermes", Some("startup" | "new" | "resume"))
                 | ("herdr:opencode", "opencode", Some("select"))
+                | ("herdr:shuvcode", "shuvcode", Some("select"))
                 | ("herdr:pi", "pi", Some("new" | "resume" | "fork"))
+                | (
+                    "herdr:shuvpi",
+                    "shuvpi",
+                    Some("new" | "resume" | "reload" | "fork")
+                )
                 | (
                     "herdr:omp",
                     "omp",
@@ -1338,11 +1346,16 @@ impl TerminalState {
         )
     }
 
-    fn session_start_source_is_recognized(session_start_source: Option<&str>) -> bool {
+    fn session_start_source_is_recognized(
+        source: &str,
+        agent_label: &str,
+        session_start_source: Option<&str>,
+    ) -> bool {
         matches!(
             session_start_source,
             Some("startup" | "clear" | "resume" | "compact" | "new" | "fork" | "select")
-        )
+        ) || (source, agent_label, session_start_source)
+            == ("herdr:shuvpi", "shuvpi", Some("reload"))
     }
 
     fn is_unsequenced_opencode_selection(
@@ -1351,8 +1364,11 @@ impl TerminalState {
         session_start_source: Option<&str>,
         seq: Option<u64>,
     ) -> bool {
-        (source, agent_label, session_start_source, seq)
-            == ("herdr:opencode", "opencode", Some("select"), None)
+        matches!(
+            (source, agent_label, session_start_source, seq),
+            ("herdr:opencode", "opencode", Some("select"), None)
+                | ("herdr:shuvcode", "shuvcode", Some("select"), None)
+        )
     }
 
     pub fn set_persisted_agent_session(
@@ -1441,7 +1457,11 @@ impl TerminalState {
             && !selection_can_reconcile
             && (!process_present || generation_gated || !session_anchored)
         {
-            if !Self::session_start_source_is_recognized(session_start_source.as_deref()) {
+            if !Self::session_start_source_is_recognized(
+                &source,
+                &agent_label,
+                session_start_source.as_deref(),
+            ) {
                 return None;
             }
             let seq = seq?;
@@ -1616,7 +1636,7 @@ impl TerminalState {
         session_ref: &crate::agent_resume::AgentSessionRef,
         session_start_source: Option<&str>,
     ) -> bool {
-        Self::session_start_source_is_recognized(session_start_source)
+        Self::session_start_source_is_recognized(source, agent_label, session_start_source)
             && self.foreground_agent_confirms_session_owner(source, agent_label, session_ref)
     }
 
@@ -2600,6 +2620,93 @@ mod tests {
                 working.is_some(),
                 "{reason} should accept working for the replacement session"
             );
+            assert_eq!(terminal.state, AgentState::Working);
+            assert_eq!(
+                terminal.hook_authority.as_ref().unwrap().session_ref,
+                crate::agent_resume::AgentSessionRef::path(new_session)
+            );
+        }
+    }
+
+    #[test]
+    fn shuvpi_reload_claims_a_running_unanchored_process() {
+        let mut terminal = test_terminal();
+        let session = test_session_path("shuvpi-reload.jsonl");
+        terminal.set_detected_state(Some(Agent::Shuvpi), AgentState::Idle);
+
+        let mutation = terminal.set_agent_session_ref_for_session_start(
+            "herdr:shuvpi".into(),
+            "shuvpi".into(),
+            crate::agent_resume::AgentSessionRef::path(session.clone()),
+            Some(10),
+            Some("reload".into()),
+        );
+
+        assert!(mutation.is_some());
+        assert_eq!(
+            terminal.persisted_agent_session,
+            Some(crate::agent_resume::PersistedAgentSession {
+                source: "herdr:shuvpi".into(),
+                agent: "shuvpi".into(),
+                session_ref: crate::agent_resume::AgentSessionRef::path(session).unwrap(),
+            })
+        );
+    }
+
+    #[test]
+    fn pi_reload_does_not_claim_a_running_unanchored_process() {
+        let mut terminal = test_terminal();
+        terminal.set_detected_state(Some(Agent::Pi), AgentState::Idle);
+
+        let mutation = terminal.set_agent_session_ref_for_session_start(
+            "herdr:pi".into(),
+            "pi".into(),
+            crate::agent_resume::AgentSessionRef::path(test_session_path("pi-reload.jsonl")),
+            Some(10),
+            Some("reload".into()),
+        );
+
+        assert!(mutation.is_none());
+        assert!(terminal.persisted_agent_session.is_none());
+        assert!(terminal.hook_authority.is_none());
+    }
+
+    #[test]
+    fn shuvpi_session_replacement_reanchors_full_lifecycle_authority() {
+        for reason in ["new", "resume", "reload", "fork"] {
+            let mut terminal = test_terminal();
+            let old_session = test_session_path(&format!("shuvpi-{reason}-old.jsonl"));
+            let new_session = test_session_path(&format!("shuvpi-{reason}-new.jsonl"));
+            terminal.set_detected_state(Some(Agent::Shuvpi), AgentState::Idle);
+            terminal.set_hook_authority_with_session_ref(
+                "herdr:shuvpi".into(),
+                "shuvpi".into(),
+                AgentState::Idle,
+                None,
+                crate::agent_resume::AgentSessionRef::path(old_session),
+                Some(10),
+            );
+
+            let session_report = terminal.set_agent_session_ref_for_session_start(
+                "herdr:shuvpi".into(),
+                "shuvpi".into(),
+                crate::agent_resume::AgentSessionRef::path(new_session.clone()),
+                Some(11),
+                Some(reason.into()),
+            );
+
+            assert!(session_report.is_some());
+            assert!(terminal.hook_authority.is_none());
+            assert!(terminal
+                .set_hook_authority_with_session_ref(
+                    "herdr:shuvpi".into(),
+                    "shuvpi".into(),
+                    AgentState::Working,
+                    None,
+                    crate::agent_resume::AgentSessionRef::path(new_session.clone()),
+                    Some(12),
+                )
+                .is_some());
             assert_eq!(terminal.state, AgentState::Working);
             assert_eq!(
                 terminal.hook_authority.as_ref().unwrap().session_ref,
@@ -4258,6 +4365,32 @@ mod tests {
         assert!(terminal.hook_authority.is_none());
         assert_eq!(terminal.detected_agent, Some(Agent::OpenCode));
         assert_eq!(terminal.effective_agent_label(), Some("opencode"));
+        assert_eq!(terminal.state, AgentState::Working);
+    }
+
+    #[test]
+    fn shuvcode_hook_authority_keeps_the_distinct_display_label() {
+        let mut terminal = test_terminal();
+        terminal.set_detected_state(Some(Agent::OpenCode), AgentState::Idle);
+        terminal.set_agent_session_ref_for_session_start(
+            "herdr:shuvcode".into(),
+            "shuvcode".into(),
+            crate::agent_resume::AgentSessionRef::id("shuvcode-session"),
+            None,
+            Some("select".into()),
+        );
+        let mutation = terminal.set_hook_authority_with_session_ref(
+            "herdr:shuvcode".into(),
+            "shuvcode".into(),
+            AgentState::Working,
+            None,
+            crate::agent_resume::AgentSessionRef::id("shuvcode-session"),
+            Some(10),
+        );
+
+        assert!(mutation.is_some());
+        assert_eq!(terminal.effective_known_agent(), Some(Agent::OpenCode));
+        assert_eq!(terminal.effective_agent_label(), Some("shuvcode"));
         assert_eq!(terminal.state, AgentState::Working);
     }
 

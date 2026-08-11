@@ -94,6 +94,7 @@ fn enforce_agent_version_accepts_current_version() {
 
 fn clear_integration_path_env() {
     std::env::remove_var(PI_CODING_AGENT_DIR_ENV_VAR);
+    std::env::remove_var(SHUVPI_CODING_AGENT_DIR_ENV_VAR);
     std::env::remove_var(OMP_CONFIG_DIR_ENV_VAR);
     std::env::remove_var(CLAUDE_CONFIG_DIR_ENV_VAR);
     std::env::remove_var(CODEX_HOME_ENV_VAR);
@@ -186,6 +187,7 @@ fn windows_supports_portable_integrations() {
     assert!(integration_target_supported(IntegrationTarget::Grok));
 
     assert!(integration_target_supported(IntegrationTarget::Pi));
+    assert!(integration_target_supported(IntegrationTarget::Shuvpi));
     assert!(integration_target_supported(IntegrationTarget::Omp));
     assert!(integration_target_supported(IntegrationTarget::Claude));
     assert!(integration_target_supported(IntegrationTarget::Codex));
@@ -210,6 +212,7 @@ fn windows_availability_includes_native_integrations() {
     std::env::set_var("PATH", &bin);
 
     fs::write(bin.join("pi.cmd"), "@echo off\r\n").unwrap();
+    fs::write(bin.join("shuvpi.cmd"), "@echo off\r\n").unwrap();
     fs::write(bin.join("omp.cmd"), "@echo off\r\n").unwrap();
     fs::write(bin.join("opencode.cmd"), "@echo off\r\n").unwrap();
     fs::write(bin.join("kilo.cmd"), "@echo off\r\n").unwrap();
@@ -220,6 +223,7 @@ fn windows_availability_includes_native_integrations() {
     fs::write(bin.join("grok.cmd"), "@echo off\r\n").unwrap();
 
     assert!(integration_target_available(IntegrationTarget::Pi));
+    assert!(integration_target_available(IntegrationTarget::Shuvpi));
     assert!(integration_target_available(IntegrationTarget::Omp));
     assert!(integration_target_available(IntegrationTarget::Opencode));
     assert!(integration_target_available(IntegrationTarget::Kilo));
@@ -256,6 +260,37 @@ fn command_available_requires_executable_file_on_path() {
 
     fs::set_permissions(&command, fs::Permissions::from_mode(0o755)).unwrap();
     assert!(command_available("claude"));
+
+    if let Some(path) = original_path {
+        std::env::set_var("PATH", path);
+    } else {
+        std::env::remove_var("PATH");
+    }
+    let _ = fs::remove_dir_all(base);
+}
+
+#[test]
+#[cfg(unix)]
+fn shuvpi_availability_is_distinct_from_pi() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let _lock = integration_env_lock();
+    let base = unique_base();
+    let bin = base.join("bin");
+    fs::create_dir_all(&bin).unwrap();
+    let original_path = std::env::var_os("PATH");
+    std::env::set_var("PATH", &bin);
+
+    let command = bin.join("shuvpi");
+    fs::write(&command, "#!/bin/sh\n").unwrap();
+    fs::set_permissions(&command, fs::Permissions::from_mode(0o755)).unwrap();
+
+    assert!(integration_target_available(
+        crate::api::schema::IntegrationTarget::Shuvpi
+    ));
+    assert!(!integration_target_available(
+        crate::api::schema::IntegrationTarget::Pi
+    ));
 
     if let Some(path) = original_path {
         std::env::set_var("PATH", path);
@@ -537,6 +572,170 @@ fn install_pi_expands_tilde_in_pi_coding_agent_dir_env() {
 }
 
 #[test]
+fn install_shuvpi_writes_its_identity_asset_to_shuvpi_extensions_dir() {
+    let _lock = integration_env_lock();
+    let base = unique_base();
+    let home = base.join("home");
+    let ext_dir = home.join(".shuvpi/agent/extensions");
+    fs::create_dir_all(&ext_dir).unwrap();
+    std::env::set_var("HOME", &home);
+
+    let path = install_shuvpi().unwrap();
+    let content = fs::read_to_string(&path).unwrap();
+
+    assert_eq!(path, ext_dir.join(SHUVPI_EXTENSION_INSTALL_NAME));
+    assert_eq!(content, SHUVPI_EXTENSION_ASSET);
+    assert!(content.contains("const source = \"herdr:shuvpi\""));
+    assert!(content.contains("agent: \"shuvpi\""));
+
+    std::env::remove_var("HOME");
+    let _ = fs::remove_dir_all(base);
+}
+
+#[test]
+fn install_shuvpi_uses_shuvpi_coding_agent_dir_env() {
+    let _lock = integration_env_lock();
+    let base = unique_base();
+    let agent_dir = base.join("custom-shuvpi-agent");
+    let ext_dir = agent_dir.join("extensions");
+    fs::create_dir_all(&ext_dir).unwrap();
+    std::env::set_var(SHUVPI_CODING_AGENT_DIR_ENV_VAR, &agent_dir);
+
+    let path = install_shuvpi().unwrap();
+
+    assert_eq!(path, ext_dir.join(SHUVPI_EXTENSION_INSTALL_NAME));
+
+    clear_integration_path_env();
+    let _ = fs::remove_dir_all(base);
+}
+
+#[test]
+fn shuvpi_asset_stays_in_sync_with_the_pi_lifecycle_protocol() {
+    let normalized = SHUVPI_EXTENSION_ASSET
+        .replace("HERDR_INTEGRATION_ID=shuvpi", "HERDR_INTEGRATION_ID=pi")
+        .replace(
+            &format!("// HERDR_INTEGRATION_VERSION={SHUVPI_INTEGRATION_VERSION}\n"),
+            &format!("// HERDR_INTEGRATION_VERSION={PI_INTEGRATION_VERSION}\n"),
+        )
+        .replace("herdr:shuvpi", "herdr:pi")
+        .replace("HERDR_SHUVPI_STATE_RETRY_MS", "HERDR_PI_STATE_RETRY_MS")
+        .replace("agent: \"shuvpi\"", "agent: \"pi\"");
+
+    assert_eq!(normalized, PI_EXTENSION_ASSET);
+}
+
+#[test]
+fn pi_and_shuvpi_coexist_in_a_shared_extension_directory() {
+    let _lock = integration_env_lock();
+    let base = unique_base();
+    let agent_dir = base.join("shared-agent");
+    let ext_dir = agent_dir.join("extensions");
+    fs::create_dir_all(&ext_dir).unwrap();
+    std::env::set_var(PI_CODING_AGENT_DIR_ENV_VAR, &agent_dir);
+    std::env::set_var(SHUVPI_CODING_AGENT_DIR_ENV_VAR, &agent_dir);
+
+    let pi_path = install_pi().unwrap();
+    let shuvpi_path = install_shuvpi().unwrap();
+    assert_ne!(pi_path, shuvpi_path);
+    assert_eq!(fs::read_to_string(&pi_path).unwrap(), PI_EXTENSION_ASSET);
+    assert_eq!(
+        fs::read_to_string(&shuvpi_path).unwrap(),
+        SHUVPI_EXTENSION_ASSET
+    );
+
+    assert!(uninstall_pi().unwrap().removed_extension);
+    assert!(!pi_path.exists());
+    assert!(shuvpi_path.exists());
+    assert!(uninstall_shuvpi().unwrap().removed_extension);
+    assert!(!shuvpi_path.exists());
+
+    clear_integration_path_env();
+    let _ = fs::remove_dir_all(base);
+}
+
+#[test]
+fn shuvpi_status_uses_shuvpi_extension_path() {
+    let _lock = integration_env_lock();
+    let base = unique_base();
+    let home = base.join("home");
+    let extension_path = home
+        .join(".shuvpi/agent/extensions")
+        .join(SHUVPI_EXTENSION_INSTALL_NAME);
+    fs::create_dir_all(extension_path.parent().unwrap()).unwrap();
+    fs::write(&extension_path, SHUVPI_EXTENSION_ASSET).unwrap();
+    std::env::set_var("HOME", &home);
+
+    let status = installed_integration_statuses()
+        .into_iter()
+        .find(|status| status.target == crate::api::schema::IntegrationTarget::Shuvpi)
+        .unwrap();
+
+    assert_eq!(status.path, extension_path);
+    assert_eq!(status.state, IntegrationStatusKind::Current);
+    assert_eq!(status.installed_version, Some(SHUVPI_INTEGRATION_VERSION));
+
+    std::env::remove_var("HOME");
+    let _ = fs::remove_dir_all(base);
+}
+
+#[test]
+fn shuvpi_status_rejects_a_copied_pi_extension_even_with_a_higher_version() {
+    let _lock = integration_env_lock();
+    let base = unique_base();
+    let home = base.join("home");
+    let extension_path = home
+        .join(".shuvpi/agent/extensions")
+        .join(SHUVPI_EXTENSION_INSTALL_NAME);
+    fs::create_dir_all(extension_path.parent().unwrap()).unwrap();
+    fs::write(&extension_path, PI_EXTENSION_ASSET).unwrap();
+    std::env::set_var("HOME", &home);
+
+    let status = installed_integration_statuses()
+        .into_iter()
+        .find(|status| status.target == crate::api::schema::IntegrationTarget::Shuvpi)
+        .unwrap();
+
+    assert_eq!(status.path, extension_path);
+    assert_eq!(status.state, IntegrationStatusKind::Outdated);
+    assert_eq!(status.installed_version, Some(PI_INTEGRATION_VERSION));
+
+    std::env::remove_var("HOME");
+    let _ = fs::remove_dir_all(base);
+}
+
+#[test]
+fn pi_status_rejects_a_copied_shuvpi_extension() {
+    let _lock = integration_env_lock();
+    let base = unique_base();
+    let home = base.join("home");
+    let extension_path = home
+        .join(".pi/agent/extensions")
+        .join(PI_EXTENSION_INSTALL_NAME);
+    fs::create_dir_all(extension_path.parent().unwrap()).unwrap();
+    fs::write(
+        &extension_path,
+        SHUVPI_EXTENSION_ASSET.replace(
+            &format!("HERDR_INTEGRATION_VERSION={SHUVPI_INTEGRATION_VERSION}"),
+            &format!("HERDR_INTEGRATION_VERSION={PI_INTEGRATION_VERSION}"),
+        ),
+    )
+    .unwrap();
+    std::env::set_var("HOME", &home);
+
+    let status = installed_integration_statuses()
+        .into_iter()
+        .find(|status| status.target == crate::api::schema::IntegrationTarget::Pi)
+        .unwrap();
+
+    assert_eq!(status.path, extension_path);
+    assert_eq!(status.state, IntegrationStatusKind::Outdated);
+    assert_eq!(status.installed_version, Some(PI_INTEGRATION_VERSION));
+
+    std::env::remove_var("HOME");
+    let _ = fs::remove_dir_all(base);
+}
+
+#[test]
 fn install_omp_writes_embedded_asset_to_omp_extensions_dir() {
     let _lock = integration_env_lock();
     let base = unique_base();
@@ -740,6 +939,32 @@ fn uninstall_pi_removes_embedded_extension_when_present() {
     );
     assert!(result.removed_extension);
     assert!(!result.extension_path.exists());
+
+    std::env::remove_var("HOME");
+    let _ = fs::remove_dir_all(base);
+}
+
+#[test]
+fn uninstall_shuvpi_removes_only_the_shuvpi_extension() {
+    let _lock = integration_env_lock();
+    let base = unique_base();
+    let home = base.join("home");
+    let pi_ext_dir = home.join(".pi/agent/extensions");
+    let shuvpi_ext_dir = home.join(".shuvpi/agent/extensions");
+    fs::create_dir_all(&pi_ext_dir).unwrap();
+    fs::create_dir_all(&shuvpi_ext_dir).unwrap();
+    let pi_path = pi_ext_dir.join(PI_EXTENSION_INSTALL_NAME);
+    let shuvpi_path = shuvpi_ext_dir.join(SHUVPI_EXTENSION_INSTALL_NAME);
+    fs::write(&pi_path, PI_EXTENSION_ASSET).unwrap();
+    fs::write(&shuvpi_path, SHUVPI_EXTENSION_ASSET).unwrap();
+    std::env::set_var("HOME", &home);
+
+    let result = uninstall_shuvpi().unwrap();
+
+    assert_eq!(result.extension_path, shuvpi_path);
+    assert!(result.removed_extension);
+    assert!(!result.extension_path.exists());
+    assert!(pi_path.is_file());
 
     std::env::remove_var("HOME");
     let _ = fs::remove_dir_all(base);
@@ -2759,6 +2984,7 @@ fn install_hermes_errors_when_config_dir_missing() {
 fn bundled_integration_asset_versions_match_expected_versions() {
     for (name, asset, expected_version) in [
         ("pi", PI_EXTENSION_ASSET, PI_INTEGRATION_VERSION),
+        ("shuvpi", SHUVPI_EXTENSION_ASSET, SHUVPI_INTEGRATION_VERSION),
         ("omp", OMP_EXTENSION_ASSET, OMP_INTEGRATION_VERSION),
         ("claude", CLAUDE_HOOK_ASSET, CLAUDE_INTEGRATION_VERSION),
         ("codex", CODEX_HOOK_ASSET, CODEX_INTEGRATION_VERSION),
@@ -2799,6 +3025,11 @@ fn bundled_integration_asset_versions_match_expected_versions() {
 
 #[test]
 fn bundled_integration_assets_report_session_refs() {
+    assert!(SHUVPI_EXTENSION_ASSET.contains("HERDR_INTEGRATION_ID=shuvpi"));
+    assert!(SHUVPI_EXTENSION_ASSET.contains("const source = \"herdr:shuvpi\""));
+    assert!(SHUVPI_EXTENSION_ASSET.contains("agent: \"shuvpi\""));
+    assert!(SHUVPI_EXTENSION_ASSET.contains("agent_session_path"));
+    assert!(SHUVPI_EXTENSION_ASSET.contains("agent_session_id"));
     assert!(PI_EXTENSION_ASSET.contains("agent_session_path"));
     assert!(PI_EXTENSION_ASSET.contains("agent_session_id"));
     assert!(PI_EXTENSION_ASSET.contains("ctx?.mode !== \"tui\""));
@@ -2923,6 +3154,7 @@ fn bundled_integration_assets_report_session_refs() {
 fn process_owned_integration_assets_do_not_report_release() {
     for (name, asset) in [
         ("pi", PI_EXTENSION_ASSET),
+        ("shuvpi", SHUVPI_EXTENSION_ASSET),
         ("omp", OMP_EXTENSION_ASSET),
         ("mastracode", MASTRACODE_HOOK_ASSET),
         ("kimi", KIMI_HOOK_ASSET),

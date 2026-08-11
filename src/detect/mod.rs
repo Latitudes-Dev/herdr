@@ -42,6 +42,7 @@ pub struct AgentDetection {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Agent {
     Pi,
+    Shuvpi,
     Claude,
     Codex,
     Gemini,
@@ -65,8 +66,9 @@ pub enum Agent {
 }
 
 impl Agent {
-    pub const ALL: [Self; 21] = [
+    pub const ALL: [Self; 22] = [
         Self::Pi,
+        Self::Shuvpi,
         Self::Claude,
         Self::Codex,
         Self::Gemini,
@@ -115,6 +117,7 @@ impl Agent {
 pub fn agent_label(agent: Agent) -> &'static str {
     match agent {
         Agent::Pi => "pi",
+        Agent::Shuvpi => "shuvpi",
         Agent::Claude => "claude",
         Agent::Codex => "codex",
         Agent::Gemini => "gemini",
@@ -141,6 +144,7 @@ pub fn agent_label(agent: Agent) -> &'static str {
 pub fn interactive_agent_executable(agent: Agent) -> &'static str {
     match agent {
         Agent::Pi => "pi",
+        Agent::Shuvpi => "shuvpi",
         Agent::Claude => "claude",
         Agent::Codex => "codex",
         Agent::Gemini => "gemini",
@@ -183,6 +187,7 @@ pub(crate) fn parse_canonical_agent_label(label: &str) -> Option<Agent> {
 fn lookup_agent(name: &str) -> Option<Agent> {
     match name {
         "pi" => Some(Agent::Pi),
+        "shuvpi" => Some(Agent::Shuvpi),
         "claude" | "claude-code" => Some(Agent::Claude),
         "codex" => Some(Agent::Codex),
         "gemini" => Some(Agent::Gemini),
@@ -292,9 +297,11 @@ pub(crate) fn full_lifecycle_hook_authority(source: &str, agent_label: &str) -> 
     matches!(
         (source, agent_label),
         ("herdr:pi", "pi")
+            | ("herdr:shuvpi", "shuvpi")
             | ("herdr:omp", "omp")
             | ("herdr:mastracode", "mastracode")
             | ("herdr:opencode", "opencode")
+            | ("herdr:shuvcode", "shuvcode")
             | ("herdr:kilo", "kilo")
             | ("herdr:kimi", "kimi")
     )
@@ -552,6 +559,17 @@ fn agent_name_from_known_package_path(path: &str) -> Option<String> {
         {
             return Some(agent_label(Agent::Pi).to_string());
         }
+        if window
+            == [
+                "node_modules",
+                "@shuv1337",
+                "shuvpi-coding-agent",
+                "dist",
+                "cli",
+            ]
+        {
+            return Some(agent_label(Agent::Shuvpi).to_string());
+        }
     }
     for window in components.windows(4) {
         if window == ["node_modules", "mastracode", "dist", "cli"] {
@@ -681,6 +699,7 @@ mod tests {
     #[test]
     fn identify_known_agents() {
         assert_eq!(identify_agent("pi"), Some(Agent::Pi));
+        assert_eq!(identify_agent("shuvpi"), Some(Agent::Shuvpi));
         assert_eq!(identify_agent("shuvcode"), Some(Agent::OpenCode));
         assert_eq!(identify_agent("opencode-next"), Some(Agent::OpenCode));
         assert_eq!(identify_agent("claude"), Some(Agent::Claude));
@@ -757,6 +776,7 @@ mod tests {
     fn every_agent_has_a_canonical_interactive_executable() {
         let expected = [
             (Agent::Pi, "pi"),
+            (Agent::Shuvpi, "shuvpi"),
             (Agent::Claude, "claude"),
             (Agent::Codex, "codex"),
             (Agent::Gemini, "gemini"),
@@ -806,6 +826,12 @@ mod tests {
             "mastracode"
         ));
         assert!(!Agent::SCREEN_MANIFEST_AGENTS.contains(&Agent::Mastracode));
+    }
+
+    #[test]
+    fn shuvpi_is_full_lifecycle_authority_without_screen_manifest() {
+        assert!(full_lifecycle_hook_authority("herdr:shuvpi", "shuvpi"));
+        assert!(!Agent::SCREEN_MANIFEST_AGENTS.contains(&Agent::Shuvpi));
     }
 
     #[test]
@@ -1024,6 +1050,26 @@ mod tests {
         assert_eq!(
             identify_agent_in_job(&job),
             Some((Agent::Mastracode, "mastracode".to_string()))
+        );
+    }
+
+    #[test]
+    fn identify_agent_in_job_detects_node_wrapped_shuvpi_package_cli() {
+        let job = crate::platform::ForegroundJob {
+            process_group_id: 123,
+            processes: vec![foreground_process(
+                123,
+                "node",
+                &[
+                    "node",
+                    "/home/user/.npm/node_modules/@shuv1337/shuvpi-coding-agent/dist/cli.js",
+                ],
+            )],
+        };
+
+        assert_eq!(
+            identify_agent_in_job(&job),
+            Some((Agent::Shuvpi, "shuvpi".to_string()))
         );
     }
 

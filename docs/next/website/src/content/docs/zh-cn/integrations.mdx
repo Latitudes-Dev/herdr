@@ -1,6 +1,6 @@
 ---
 title: 集成
-description: 为 Pi、OMP、Claude Code、Codex、GitHub Copilot CLI、Devin CLI、Droid、Kimi Code CLI、OpenCode、Kilo Code CLI、Hermes Agent、Qoder CLI、Cursor Agent CLI、MastraCode、Antigravity CLI 和 Grok CLI 安装 Herdr 集成。
+description: 为 Pi、ShuvPi、OMP、Claude Code、Codex、GitHub Copilot CLI、Devin CLI、Droid、Kimi Code CLI、OpenCode、Kilo Code CLI、Hermes Agent、Qoder CLI、Cursor Agent CLI、MastraCode、Antigravity CLI 和 Grok CLI 安装 Herdr 集成。
 ---
 
 Herdr 自动检测受支持的智能体。官方集成可以额外提供用于恢复的原生会话身份、生命周期状态上报,或两者兼有。
@@ -13,6 +13,7 @@ Herdr 自动检测受支持的智能体。官方集成可以额外提供用于�
 
 ```bash
 herdr integration install pi
+herdr integration install shuvpi
 herdr integration install omp
 herdr integration install claude
 herdr integration install codex
@@ -34,6 +35,7 @@ herdr integration install grok
 
 ```bash
 herdr integration uninstall pi
+herdr integration uninstall shuvpi
 herdr integration uninstall omp
 herdr integration uninstall claude
 herdr integration uninstall codex
@@ -57,7 +59,7 @@ Herdr 以两种不同方式使用集成:
 
 | 集成类型 | 智能体 | 效果 |
 | --- | --- | --- |
-| 生命周期权威 | Pi、OMP、Kimi Code CLI、OpenCode、Kilo Code CLI、MastraCode | 已安装且在为该窗格主动上报时,由钩子或插件事件决定 `idle`、`working` 和 `blocked`。对同一个生命周期权威,Herdr 不再使用屏幕清单兜底。 |
+| 生命周期权威 | Pi、ShuvPi、OMP、Kimi Code CLI、OpenCode、Kilo Code CLI、MastraCode | 已安装且在为该窗格主动上报时,由钩子或插件事件决定 `idle`、`working` 和 `blocked`。对同一个生命周期权威,Herdr 不再使用屏幕清单兜底。 |
 | 会话身份 | Claude Code、Codex、GitHub Copilot CLI、Devin CLI、Droid、Qoder CLI、Cursor Agent CLI、Hermes Agent、Antigravity CLI、Grok CLI | 集成上报用于恢复的原生会话引用。状态仍来自 Herdr 的屏幕清单检测。 |
 
 自定义集成在定义了原生终端 UI 中不可见的状态时,也可以上报状态。它们不需要内置到 Herdr 中,也不要求 Herdr 识别智能体的可执行文件。
@@ -89,9 +91,9 @@ Herdr 以两种不同方式使用集成:
 
 [Prime Agent 内置的 Herdr 上报器](https://github.com/PrimeIntellect-ai/prime-agent/blob/main/packages/coding-agent/src/core/extensions/builtin/herdr-agent-state.ts)是一个真实实现示例。它只在 Herdr 中启用,将智能体事件映射为 `working`、`idle` 和 `blocked`,跨会话保持上报顺序,并在退出时释放权威。
 
-一些集成会上报智能体的原生会话引用。除非被 `[session] resume_agents_on_restore = false` 禁用,Herdr 会在服务器重启后使用官方会话引用恢复 Claude Code、Codex、Devin CLI、Droid、Kimi Code CLI、Qoder CLI、Cursor Agent CLI、Grok CLI、GitHub Copilot CLI、Pi、OMP、Hermes Agent、OpenCode、Kilo Code CLI、MastraCode 和 Antigravity CLI 的窗格。
+一些集成会上报智能体的原生会话引用。除非被 `[session] resume_agents_on_restore = false` 禁用,Herdr 会在服务器重启后使用官方会话引用恢复 Claude Code、Codex、Devin CLI、Droid、Kimi Code CLI、Qoder CLI、Cursor Agent CLI、Grok CLI、GitHub Copilot CLI、Pi、ShuvPi、OMP、Hermes Agent、OpenCode、Kilo Code CLI、MastraCode 和 Antigravity CLI 的窗格。
 
-原生会话恢复需要最新的 Herdr 集成: Pi 集成版本 `2`、OMP 版本 `3`、Claude Code 版本 `6`、Codex 版本 `5`、GitHub Copilot CLI 版本 `2`、Devin CLI 版本 `2`、Droid 版本 `2`、Kimi Code CLI 版本 `3`、Qoder CLI 版本 `2`、Cursor Agent CLI 版本 `1`、Grok CLI 版本 `1`、OpenCode 版本 `5`、Kilo Code CLI 版本 `1`、Hermes Agent 版本 `5`、MastraCode 版本 `1`、Antigravity CLI 版本 `1`。用 `herdr integration status` 查看已安装版本。
+原生会话恢复需要最新的 Herdr 集成: Pi 集成版本 `2`、ShuvPi 版本 `1`、OMP 版本 `3`、Claude Code 版本 `6`、Codex 版本 `5`、GitHub Copilot CLI 版本 `2`、Devin CLI 版本 `2`、Droid 版本 `2`、Kimi Code CLI 版本 `3`、Qoder CLI 版本 `2`、Cursor Agent CLI 版本 `1`、Grok CLI 版本 `1`、OpenCode 版本 `5`、Kilo Code CLI 版本 `1`、Hermes Agent 版本 `5`、MastraCode 版本 `1`、Antigravity CLI 版本 `1`。用 `herdr integration status` 查看已安装版本。
 
 ## Pi
 
@@ -108,6 +110,16 @@ Herdr 把内置扩展写入:
 ```
 
 如果设置了 `PI_CODING_AGENT_DIR`,Herdr 会改为写入 `$PI_CODING_AGENT_DIR/extensions/herdr-agent-state.ts`。如果 Pi agent 目录已经存在,Herdr 会创建 extensions 目录。卸载只删除那个扩展文件。
+
+## ShuvPi
+
+安装 ShuvPi 集成:
+
+```bash
+herdr integration install shuvpi
+```
+
+Herdr 将内置扩展写入 `~/.shuvpi/agent/extensions/herdr-shuvpi-agent-state.ts`;如果设置了 `SHUVPI_CODING_AGENT_DIR`,则写入 `$SHUVPI_CODING_AGENT_DIR/extensions/herdr-shuvpi-agent-state.ts`。扩展以独立的 `shuvpi` 身份上报 ShuvPi 生命周期状态和原生会话路径。Herdr 使用 `shuvpi --session <path-or-id>` 恢复已保存的会话。Pi 与 ShuvPi 使用不同的扩展文件名,因此即使配置的 agent 目录解析到同一个扩展目录,两个集成也仍然彼此独立。
 
 ## OMP
 
@@ -215,9 +227,9 @@ Herdr 的 Droid 钩子使用 `~/.factory`。Factory 配置目录必须已经存�
 herdr integration install opencode
 ```
 
-Herdr 把插件写入 `~/.config/opencode/plugins/herdr-agent-state.js`。OpenCode 配置目录必须已经存在。卸载只删除那个插件文件。
+Herdr 会把插件写入所有已存在的 OpenCode 兼容配置根目录:标准 OpenCode 使用 `~/.config/opencode`,ShuvCode 分支使用 `~/.config/shuvcode`。必须至少已有一个配置目录。卸载只删除 Herdr 插件文件。
 
-该插件在 OpenCode 运行于 Herdr 窗格内时上报生命周期状态和会话身份。在 OpenCode 发出携带会话信息的事件后,Herdr 可以用上报的会话 id 通过 `opencode --session <id>` 恢复该窗格。插件未安装时,屏幕清单检测仍然可用。
+该插件会在任一宿主运行于 Herdr 窗格内时上报生命周期状态和会话身份。标准 OpenCode 仍识别为 `opencode`,并通过 `opencode --session <id>` 恢复;该分支识别为 `shuvcode`,并通过 `shuvcode --session <id>` 恢复。两种身份共享 OpenCode 的检测行为以及 `ui.sidebar.agents.rows_by_agent.opencode` / `ui.sound.agents.open_code` 设置。请重新安装版本 `10` 或更高版本的集成以启用独立的 ShuvCode 身份。插件未安装时,屏幕清单检测仍然可用。
 
 ## Kilo Code CLI
 

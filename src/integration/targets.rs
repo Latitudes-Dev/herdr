@@ -20,7 +20,7 @@ use super::config_edit::{
 use super::env::{
     antigravity_cli_dir, claude_dir, codex_dir, copilot_dir, cursor_dir, devin_dir, droid_dir,
     grok_dir, hermes_dir, hermes_plugin_dir, kilo_dir, kimi_dir, mastracode_dir, omp_extension_dir,
-    opencode_config_dirs, pi_extension_dir, qodercli_dir,
+    opencode_config_dirs, pi_extension_dir, qodercli_dir, shuvpi_extension_dir,
 };
 use super::file_ops::{
     make_executable, remove_dir_all_if_exists, remove_file_if_exists, remove_legacy_bash_hook_file,
@@ -81,6 +81,15 @@ pub(crate) fn install_pi() -> io::Result<PathBuf> {
 
     let path = dir.join(PI_EXTENSION_INSTALL_NAME);
     fs::write(&path, PI_EXTENSION_ASSET)?;
+    Ok(path)
+}
+
+pub(crate) fn install_shuvpi() -> io::Result<PathBuf> {
+    let dir = shuvpi_extension_dir()?;
+    ensure_extension_dir(&dir, "shuvpi")?;
+
+    let path = dir.join(super::SHUVPI_EXTENSION_INSTALL_NAME);
+    fs::write(&path, super::SHUVPI_EXTENSION_ASSET)?;
     Ok(path)
 }
 
@@ -569,7 +578,19 @@ pub(crate) fn install_hermes() -> io::Result<HermesInstallPaths> {
 }
 
 pub(crate) fn uninstall_pi() -> io::Result<PiUninstallResult> {
-    let extension_path = pi_extension_dir()?.join(PI_EXTENSION_INSTALL_NAME);
+    let dir = pi_extension_dir()?;
+    let extension_path = dir.join(PI_EXTENSION_INSTALL_NAME);
+    let removed_extension = remove_file_if_exists(&extension_path)?;
+
+    Ok(PiUninstallResult {
+        extension_path,
+        removed_extension,
+    })
+}
+
+pub(crate) fn uninstall_shuvpi() -> io::Result<PiUninstallResult> {
+    let dir = shuvpi_extension_dir()?;
+    let extension_path = dir.join(super::SHUVPI_EXTENSION_INSTALL_NAME);
     let removed_extension = remove_file_if_exists(&extension_path)?;
 
     Ok(PiUninstallResult {

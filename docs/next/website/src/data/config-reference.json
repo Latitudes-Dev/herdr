@@ -913,6 +913,17 @@
           ]
         },
         {
+          "key": "ui.sound.agents.shuvpi",
+          "type": "enum",
+          "default": "\"default\"",
+          "description": "Sound override for detected ShuvPi agents.",
+          "values": [
+            "default",
+            "on",
+            "off"
+          ]
+        },
+        {
           "key": "ui.sound.agents.claude",
           "type": "enum",
           "default": "\"default\"",

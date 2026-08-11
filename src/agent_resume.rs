@@ -60,7 +60,7 @@ pub fn session_ref_from_report(
         return None;
     }
 
-    if agent == "pi" || agent == "omp" {
+    if matches!(agent, "pi" | "shuvpi" | "omp") {
         return _agent_session_path
             .and_then(AgentSessionRef::path)
             .or_else(|| agent_session_id.and_then(AgentSessionRef::id));
@@ -69,10 +69,17 @@ pub fn session_ref_from_report(
     agent_session_id.and_then(AgentSessionRef::id)
 }
 
-pub fn normalize_session_start_source(value: Option<String>) -> Option<String> {
+pub fn normalize_session_start_source(
+    source: &str,
+    agent: &str,
+    value: Option<String>,
+) -> Option<String> {
     match value.as_deref().map(str::trim) {
-        Some(source @ ("startup" | "resume" | "clear" | "compact" | "new" | "fork" | "select")) => {
-            Some(source.to_string())
+        Some(value @ ("startup" | "resume" | "clear" | "compact" | "new" | "fork" | "select")) => {
+            Some(value.to_string())
+        }
+        Some("reload") if (source, agent) == ("herdr:shuvpi", "shuvpi") => {
+            Some("reload".to_string())
         }
         _ => None,
     }
@@ -102,7 +109,7 @@ pub fn session_ref_from_snapshot(
         return None;
     }
     let session_ref = match (agent, kind) {
-        ("pi" | "omp", AgentSessionRefKind::Path) => AgentSessionRef::path(value)?,
+        ("pi" | "shuvpi" | "omp", AgentSessionRefKind::Path) => AgentSessionRef::path(value)?,
         (_, AgentSessionRefKind::Id) => AgentSessionRef::id(value)?,
         _ => return None,
     };
@@ -151,6 +158,13 @@ pub fn plan(source: &str, agent: &str, session_ref: &AgentSessionRef) -> Option<
         ("herdr:pi", "pi", AgentSessionRefKind::Path | AgentSessionRefKind::Id) => {
             vec!["pi".into(), "--session".into(), session_ref.value.clone()]
         }
+        ("herdr:shuvpi", "shuvpi", AgentSessionRefKind::Path | AgentSessionRefKind::Id) => {
+            vec![
+                "shuvpi".into(),
+                "--session".into(),
+                session_ref.value.clone(),
+            ]
+        }
         ("herdr:omp", "omp", AgentSessionRefKind::Path | AgentSessionRefKind::Id) => {
             // omp resume is `-r, --resume=<value>` (ID prefix or path); it has no
             // `--session` flag, unlike pi.
@@ -164,12 +178,21 @@ pub fn plan(source: &str, agent: &str, session_ref: &AgentSessionRef) -> Option<
             ]
         }
         ("herdr:opencode", "opencode", AgentSessionRefKind::Id) => {
-            let binary = if which_binary("shuvcode") {
-                "shuvcode"
-            } else {
+            let binary = if crate::integration::command_available("opencode")
+                || !crate::integration::command_available("shuvcode")
+            {
                 "opencode"
+            } else {
+                "shuvcode"
             };
             vec![binary.into(), "--session".into(), session_ref.value.clone()]
+        }
+        ("herdr:shuvcode", "shuvcode", AgentSessionRefKind::Id) => {
+            vec![
+                "shuvcode".into(),
+                "--session".into(),
+                session_ref.value.clone(),
+            ]
         }
         ("herdr:qodercli", "qodercli", AgentSessionRefKind::Id) => {
             vec![
@@ -232,25 +255,16 @@ pub(crate) fn is_official_agent_source(source: &str, agent: &str) -> bool {
             | ("herdr:omp", "omp")
             | ("herdr:mastracode", "mastracode")
             | ("herdr:pi", "pi")
+            | ("herdr:shuvpi", "shuvpi")
             | ("herdr:hermes", "hermes")
             | ("herdr:opencode", "opencode")
+            | ("herdr:shuvcode", "shuvcode")
             | ("herdr:qodercli", "qodercli")
             | ("herdr:kilo", "kilo")
             | ("herdr:cursor", "cursor")
             | ("herdr:antigravity_cli", "agy")
             | ("herdr:grok", "grok")
     )
-}
-
-fn which_binary(name: &str) -> bool {
-    std::env::var_os("PATH")
-        .map(|paths| {
-            std::env::split_paths(&paths).any(|dir| {
-                let candidate = dir.join(name);
-                candidate.is_file()
-            })
-        })
-        .unwrap_or(false)
 }
 
 fn valid_session_id(value: &str) -> bool {
@@ -291,6 +305,7 @@ mod tests {
     #[test]
     fn planner_allows_supported_agents() {
         let pi_session = absolute_test_path("pi-session.jsonl");
+        let shuvpi_session = absolute_test_path("shuvpi-session.jsonl");
         let omp_session = absolute_test_path("omp-session.jsonl");
         assert_eq!(
             plan(
@@ -374,6 +389,16 @@ mod tests {
         );
         assert_eq!(
             plan(
+                "herdr:shuvpi",
+                "shuvpi",
+                &AgentSessionRef::path(&shuvpi_session).unwrap()
+            )
+            .unwrap()
+            .argv,
+            vec!["shuvpi", "--session", shuvpi_session.as_str()]
+        );
+        assert_eq!(
+            plan(
                 "herdr:omp",
                 "omp",
                 &AgentSessionRef::path(&omp_session).unwrap()
@@ -403,9 +428,19 @@ mod tests {
             assert!(
                 argv == ["opencode", "--session", "opencode-session"]
                     || argv == ["shuvcode", "--session", "opencode-session"],
-                "unexpected opencode resume argv: {argv:?}"
+                "unexpected legacy opencode resume argv: {argv:?}"
             );
         }
+        assert_eq!(
+            plan(
+                "herdr:shuvcode",
+                "shuvcode",
+                &AgentSessionRef::id("shuvcode-session").unwrap(),
+            )
+            .unwrap()
+            .argv,
+            vec!["shuvcode", "--session", "shuvcode-session"]
+        );
         assert_eq!(
             plan(
                 "herdr:qodercli",
@@ -484,8 +519,9 @@ mod tests {
     }
 
     #[test]
-    fn report_ref_prefers_pi_and_omp_paths_and_validates_values() {
+    fn report_ref_prefers_pi_shuvpi_and_omp_paths_and_validates_values() {
         let pi_session = absolute_test_path("pi-session.jsonl");
+        let shuvpi_session = absolute_test_path("shuvpi-session.jsonl");
         let omp_session = absolute_test_path("omp-session.jsonl");
         let claude_session = absolute_test_path("claude-session");
         let copilot_session = absolute_test_path("copilot-session");
@@ -505,6 +541,16 @@ mod tests {
                 .is_none()
         );
         assert!(session_ref_from_report("custom:pi", "pi", Some("pi-id".into()), None).is_none());
+
+        let session_ref = session_ref_from_report(
+            "herdr:shuvpi",
+            "shuvpi",
+            Some("shuvpi-id".into()),
+            Some(shuvpi_session.clone()),
+        )
+        .unwrap();
+        assert_eq!(session_ref.kind, AgentSessionRefKind::Path);
+        assert_eq!(session_ref.value, shuvpi_session);
 
         let session_ref = session_ref_from_report(
             "herdr:omp",
@@ -601,39 +647,50 @@ mod tests {
     #[test]
     fn normalize_session_start_source_allows_known_values() {
         assert_eq!(
-            normalize_session_start_source(Some("startup".into())),
+            normalize_session_start_source("herdr:pi", "pi", Some("startup".into())),
             Some("startup".into())
         );
         assert_eq!(
-            normalize_session_start_source(Some("resume".into())),
+            normalize_session_start_source("herdr:pi", "pi", Some("resume".into())),
             Some("resume".into())
         );
         assert_eq!(
-            normalize_session_start_source(Some("clear".into())),
+            normalize_session_start_source("herdr:shuvpi", "shuvpi", Some("reload".into())),
+            Some("reload".into())
+        );
+        assert_eq!(
+            normalize_session_start_source("herdr:pi", "pi", Some("reload".into())),
+            None
+        );
+        assert_eq!(
+            normalize_session_start_source("herdr:pi", "pi", Some("clear".into())),
             Some("clear".into())
         );
         assert_eq!(
-            normalize_session_start_source(Some("compact".into())),
+            normalize_session_start_source("herdr:pi", "pi", Some("compact".into())),
             Some("compact".into())
         );
         assert_eq!(
-            normalize_session_start_source(Some("new".into())),
+            normalize_session_start_source("herdr:pi", "pi", Some("new".into())),
             Some("new".into())
         );
         assert_eq!(
-            normalize_session_start_source(Some("fork".into())),
+            normalize_session_start_source("herdr:pi", "pi", Some("fork".into())),
             Some("fork".into())
         );
         assert_eq!(
-            normalize_session_start_source(Some("select".into())),
+            normalize_session_start_source("herdr:opencode", "opencode", Some("select".into())),
             Some("select".into())
         );
         assert_eq!(
-            normalize_session_start_source(Some(" resume ".into())),
+            normalize_session_start_source("herdr:pi", "pi", Some(" resume ".into())),
             Some("resume".into())
         );
-        assert_eq!(normalize_session_start_source(Some("other".into())), None);
-        assert_eq!(normalize_session_start_source(None), None);
+        assert_eq!(
+            normalize_session_start_source("herdr:pi", "pi", Some("other".into())),
+            None
+        );
+        assert_eq!(normalize_session_start_source("herdr:pi", "pi", None), None);
     }
 
     #[test]

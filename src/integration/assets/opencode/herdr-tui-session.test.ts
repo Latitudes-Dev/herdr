@@ -36,6 +36,7 @@ beforeEach(() => {
   process.env.HERDR_ENV = "1";
   process.env.HERDR_SOCKET_PATH = "test.sock";
   process.env.HERDR_PANE_ID = "test:p1";
+  delete process.env.OPENCODE_CONFIG_DIR;
 });
 
 afterEach(() => {
@@ -107,6 +108,21 @@ test("reports a root session when only the local route changes", async () => {
   expect(requestParam(requests[0], "agent_session_id")).toBe("session-a");
   expect(requestParam(requests[0], "session_start_source")).toBe("select");
   expect(requestParam(requests[0], "seq")).toBeUndefined();
+});
+
+test("reports the shuvcode identity from the shuvcode config root", async () => {
+  process.env.OPENCODE_CONFIG_DIR = "/home/user/.config/shuvcode";
+  const plugin = await loadPlugin();
+  const tui = fakeApi();
+  tui.addSession({ id: "session-a" });
+  await plugin.tui(tui.api);
+
+  const dispatched = waitForNextRequest();
+  tui.select("session-a");
+  await dispatched;
+
+  expect(requestParam(requests[0], "source")).toBe("herdr:shuvcode");
+  expect(requestParam(requests[0], "agent")).toBe("shuvcode");
 });
 
 test("retries an initial selection while Herdr detects the process", async () => {

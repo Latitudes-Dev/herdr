@@ -1,6 +1,6 @@
 ---
 title: Integrations
-description: Install Herdr integrations for Pi, OMP, Claude Code, Codex, GitHub Copilot CLI, Devin CLI, Droid, Kimi Code CLI, OpenCode, Kilo Code CLI, Hermes Agent, Qoder CLI, Cursor Agent CLI, MastraCode, Antigravity CLI, and Grok CLI.
+description: Install Herdr integrations for Pi, ShuvPi, OMP, Claude Code, Codex, GitHub Copilot CLI, Devin CLI, Droid, Kimi Code CLI, OpenCode, Kilo Code CLI, Hermes Agent, Qoder CLI, Cursor Agent CLI, MastraCode, Antigravity CLI, and Grok CLI.
 ---
 
 Herdr detects supported agents automatically. Install official integrations when you want native agent session restore, direct lifecycle reports, or both. See [Agents](/docs/agents/) for the full status authority model.
@@ -11,6 +11,7 @@ Open settings inside Herdr and use the integrations tab to install recommended i
 
 ```bash
 herdr integration install pi
+herdr integration install shuvpi
 herdr integration install omp
 herdr integration install claude
 herdr integration install codex
@@ -32,6 +33,7 @@ herdr integration install grok
 
 ```bash
 herdr integration uninstall pi
+herdr integration uninstall shuvpi
 herdr integration uninstall omp
 herdr integration uninstall claude
 herdr integration uninstall codex
@@ -55,7 +57,7 @@ Herdr uses integrations in two ways:
 
 | Integration type | Agents | Effect |
 | --- | --- | --- |
-| Lifecycle authority | Pi, OMP, Kimi Code CLI, OpenCode, Kilo Code CLI, MastraCode | When installed and actively reporting for the pane, hook or plugin events author `idle`, `working`, and `blocked`. Herdr does not also use screen manifest fallback for that same lifecycle authority. |
+| Lifecycle authority | Pi, ShuvPi, OMP, Kimi Code CLI, OpenCode, Kilo Code CLI, MastraCode | When installed and actively reporting for the pane, hook or plugin events author `idle`, `working`, and `blocked`. Herdr does not also use screen manifest fallback for that same lifecycle authority. |
 | Session identity | Claude Code, Codex, GitHub Copilot CLI, Devin CLI, Droid, Qoder CLI, Cursor Agent CLI, Hermes Agent, Antigravity CLI, Grok CLI | The integration reports native session references for restore. State still comes from Herdr's screen manifest detection. |
 
 Custom integrations can also report state that is not visible in the native terminal UI. They do not need to be built into Herdr or use a recognized agent executable.
@@ -87,9 +89,9 @@ Use `HERDR_BIN_PATH` and the CLI wrappers for portable integrations. Code that n
 
 [Prime Agent's built-in Herdr reporter](https://github.com/PrimeIntellect-ai/prime-agent/blob/main/packages/coding-agent/src/core/extensions/builtin/herdr-agent-state.ts) is a real-world example. It activates only inside Herdr, maps agent events to `working`, `idle`, and `blocked`, preserves report ordering across sessions, and releases authority on exit.
 
-Some integrations report native agent session references. Herdr uses official session references to resume Claude Code, Codex, Devin CLI, Droid, Kimi Code CLI, Qoder CLI, Cursor Agent CLI, Grok CLI, GitHub Copilot CLI, Pi, OMP, Hermes Agent, OpenCode, Kilo Code CLI, MastraCode, and Antigravity CLI panes after a Herdr server restart unless `[session] resume_agents_on_restore = false` disables it.
+Some integrations report native agent session references. Herdr uses official session references to resume Claude Code, Codex, Devin CLI, Droid, Kimi Code CLI, Qoder CLI, Cursor Agent CLI, Grok CLI, GitHub Copilot CLI, Pi, ShuvPi, OMP, Hermes Agent, OpenCode, Kilo Code CLI, MastraCode, and Antigravity CLI panes after a Herdr server restart unless `[session] resume_agents_on_restore = false` disables it.
 
-Native session restore requires current Herdr integrations: Pi integration version `2`, OMP version `3`, Claude Code version `6`, Codex version `5`, GitHub Copilot CLI version `2`, Devin CLI version `2`, Droid version `2`, Kimi Code CLI version `3`, Qoder CLI version `2`, Cursor Agent CLI version `1`, Grok CLI version `1`, OpenCode version `5`, Kilo Code CLI version `1`, Hermes Agent version `5`, MastraCode version `1`, or Antigravity CLI version `1`. Check installed versions with `herdr integration status`.
+Native session restore requires current Herdr integrations: Pi integration version `2`, ShuvPi version `1`, OMP version `3`, Claude Code version `6`, Codex version `5`, GitHub Copilot CLI version `2`, Devin CLI version `2`, Droid version `2`, Kimi Code CLI version `3`, Qoder CLI version `2`, Cursor Agent CLI version `1`, Grok CLI version `1`, OpenCode version `5`, Kilo Code CLI version `1`, Hermes Agent version `5`, MastraCode version `1`, or Antigravity CLI version `1`. Check installed versions with `herdr integration status`.
 
 ## Pi
 
@@ -106,6 +108,16 @@ Herdr writes the bundled extension to:
 ```
 
 If `PI_CODING_AGENT_DIR` is set, Herdr writes to `$PI_CODING_AGENT_DIR/extensions/herdr-agent-state.ts` instead. Herdr creates the extensions directory when the Pi agent directory already exists. Uninstall removes only that extension file.
+
+## ShuvPi
+
+Install the ShuvPi integration:
+
+```bash
+herdr integration install shuvpi
+```
+
+Herdr writes the bundled extension to `~/.shuvpi/agent/extensions/herdr-shuvpi-agent-state.ts`, or to `$SHUVPI_CODING_AGENT_DIR/extensions/herdr-shuvpi-agent-state.ts` when that environment variable is set. The extension reports ShuvPi lifecycle state and native session paths under the distinct `shuvpi` identity. Herdr resumes stored sessions with `shuvpi --session <path-or-id>`. Pi and ShuvPi use distinct extension filenames, so both integrations remain independent even when their configured agent directories resolve to the same extension directory.
 
 ## OMP
 
@@ -213,9 +225,9 @@ Install the OpenCode plugin:
 herdr integration install opencode
 ```
 
-Herdr writes the plugin to `~/.config/opencode/plugins/herdr-agent-state.js`. The OpenCode config directory must already exist. Uninstall removes only that plugin file.
+Herdr writes the plugin to every existing OpenCode-compatible config root: `~/.config/opencode` for stock OpenCode and `~/.config/shuvcode` for the ShuvCode fork. At least one config directory must already exist. Uninstall removes only the Herdr plugin files.
 
-The plugin reports lifecycle state and session identity while OpenCode runs inside a Herdr pane. After OpenCode emits a session-bearing event, Herdr can use the reported session id to resume the pane with `opencode --session <id>`. Native screen manifest detection remains available when the plugin is not installed.
+The plugin reports lifecycle state and session identity while either host runs inside a Herdr pane. Stock OpenCode remains identified as `opencode` and resumes with `opencode --session <id>`; the fork is identified as `shuvcode` and resumes with `shuvcode --session <id>`. Both identities share OpenCode's detection behavior and `ui.sidebar.agents.rows_by_agent.opencode` / `ui.sound.agents.open_code` settings. Reinstall integration version `10` or newer to enable the distinct ShuvCode identity. Native screen manifest detection remains available when the plugin is not installed.
 
 ## Kilo Code CLI
 

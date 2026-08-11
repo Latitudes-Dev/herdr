@@ -2106,6 +2106,7 @@
         "IntegrationTarget": {
           "enum": [
             "pi",
+            "shuvpi",
             "omp",
             "claude",
             "codex",
@@ -7161,6 +7162,7 @@
         "IntegrationTarget": {
           "enum": [
             "pi",
+            "shuvpi",
             "omp",
             "claude",
             "codex",

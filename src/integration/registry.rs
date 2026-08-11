@@ -7,7 +7,7 @@ use super::env::hermes_dir;
 use super::env::{
     antigravity_cli_dir, claude_dir, codex_dir, copilot_dir, cursor_dir, devin_dir, droid_dir,
     grok_dir, hermes_plugin_dir, kilo_dir, kimi_dir, mastracode_dir, omp_extension_dir,
-    opencode_config_dirs, opencode_dir, pi_extension_dir, qodercli_dir,
+    opencode_config_dirs, opencode_dir, pi_extension_dir, qodercli_dir, shuvpi_extension_dir,
 };
 
 pub(crate) fn integration_target_label(
@@ -15,6 +15,7 @@ pub(crate) fn integration_target_label(
 ) -> &'static str {
     match target {
         crate::api::schema::IntegrationTarget::Pi => "pi",
+        crate::api::schema::IntegrationTarget::Shuvpi => "shuvpi",
         crate::api::schema::IntegrationTarget::Omp => "omp",
         crate::api::schema::IntegrationTarget::Claude => "claude",
         crate::api::schema::IntegrationTarget::Codex => "codex",
@@ -44,6 +45,7 @@ pub(crate) fn integration_target_command_names(
 ) -> &'static [&'static str] {
     match target {
         crate::api::schema::IntegrationTarget::Pi => &["pi"],
+        crate::api::schema::IntegrationTarget::Shuvpi => &["shuvpi"],
         crate::api::schema::IntegrationTarget::Omp => &["omp"],
         crate::api::schema::IntegrationTarget::Claude => &["claude"],
         crate::api::schema::IntegrationTarget::Codex => &["codex"],
@@ -72,6 +74,7 @@ pub(crate) fn integration_target_supported(target: crate::api::schema::Integrati
         matches!(
             target,
             crate::api::schema::IntegrationTarget::Pi
+                | crate::api::schema::IntegrationTarget::Shuvpi
                 | crate::api::schema::IntegrationTarget::Omp
                 | crate::api::schema::IntegrationTarget::Claude
                 | crate::api::schema::IntegrationTarget::Codex
@@ -270,12 +273,17 @@ fn integration_specs() -> [(
     crate::api::schema::IntegrationTarget,
     io::Result<PathBuf>,
     u32,
-); 16] {
+); 17] {
     [
         (
             crate::api::schema::IntegrationTarget::Pi,
             pi_extension_dir().map(|dir| dir.join(super::PI_EXTENSION_INSTALL_NAME)),
             super::PI_INTEGRATION_VERSION,
+        ),
+        (
+            crate::api::schema::IntegrationTarget::Shuvpi,
+            shuvpi_extension_dir().map(|dir| dir.join(super::SHUVPI_EXTENSION_INSTALL_NAME)),
+            super::SHUVPI_INTEGRATION_VERSION,
         ),
         (
             crate::api::schema::IntegrationTarget::Omp,
@@ -443,14 +451,27 @@ pub(crate) fn integration_status_at(
         };
     }
 
-    let installed_version = fs::read_to_string(&path)
-        .ok()
-        .and_then(|content| parse_integration_version(&content));
+    let content = fs::read_to_string(&path).ok();
+    let installed_version = content.as_deref().and_then(parse_integration_version);
     let mut state = if installed_version.is_some_and(|version| version >= expected_version) {
         super::IntegrationStatusKind::Current
     } else {
         super::IntegrationStatusKind::Outdated
     };
+
+    // These extension hosts can share one directory. A copied sibling asset
+    // may have a current version while reporting the wrong official identity.
+    let expected_id = match target {
+        crate::api::schema::IntegrationTarget::Pi => Some("pi"),
+        crate::api::schema::IntegrationTarget::Shuvpi => Some("shuvpi"),
+        crate::api::schema::IntegrationTarget::Omp => Some("omp"),
+        _ => None,
+    };
+    if expected_id
+        .is_some_and(|expected| content.as_deref().and_then(parse_integration_id) != Some(expected))
+    {
+        state = super::IntegrationStatusKind::Outdated;
+    }
 
     // Grok only invokes the hook when the herdr-owned `hooks/herdr.json`
     // registers it, so a current hook script with a missing or broken config
@@ -609,5 +630,16 @@ pub(crate) fn parse_integration_version(content: &str) -> Option<u32> {
             .trim()
             .parse()
             .ok()
+    })
+}
+
+fn parse_integration_id(content: &str) -> Option<&str> {
+    content.lines().find_map(|line| {
+        line.trim()
+            .trim_start_matches('/')
+            .trim_start_matches('#')
+            .trim()
+            .strip_prefix(super::INTEGRATION_ID_MARKER)
+            .map(str::trim)
     })
 }

@@ -4,10 +4,18 @@
 
 import net from "node:net"
 
-// Official herdr source so resume/detect accept reports from stock OpenCode
-// and the isolated shuvcode host.
-const SOURCE = "herdr:opencode"
-const AGENT = "opencode"
+const AGENT = isShuvcodeHost() ? "shuvcode" : "opencode"
+const SOURCE = `herdr:${AGENT}`
+
+function isShuvcodeHost(): boolean {
+  if (/(?:^|[\\/])shuvcode[\\/]plugins[\\/]/i.test(import.meta.url)) return true
+  const executablePattern = /(?:^|[\\/])shuvcode(?:\.(?:exe|cmd|bat|ps1))?$/i
+  if ([process.execPath, process.argv0, process.argv?.[0], process.argv?.[1]].some(
+    (value) => typeof value === "string" && executablePattern.test(value),
+  )) return true
+  const configDir = process.env.OPENCODE_CONFIG_DIR
+  return typeof configDir === "string" && /(?:^|[\\/])shuvcode[\\/]?$/i.test(configDir)
+}
 
 export interface HerdrClientOptions {
   paneID: string

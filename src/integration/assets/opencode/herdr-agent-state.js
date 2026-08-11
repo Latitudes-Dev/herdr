@@ -6,8 +6,8 @@
 
 import net from "node:net";
 
-const SOURCE = "herdr:opencode";
-const AGENT = "opencode";
+const AGENT = isShuvcodeHost() ? "shuvcode" : "opencode";
+const SOURCE = `herdr:${AGENT}`;
 let reportSeq = Date.now() * 1000;
 let requestChain = Promise.resolve();
 let reportedRootSessionID;
@@ -22,6 +22,20 @@ const CHILD_EVENT_STATES = new Map([
   ["question.replied", "working"],
   ["question.rejected", "working"],
 ]);
+
+function isShuvcodeHost() {
+  if (/(?:^|[\\/])shuvcode[\\/]plugins[\\/]/i.test(import.meta.url)) {
+    return true;
+  }
+  const executablePattern = /(?:^|[\\/])shuvcode(?:\.(?:exe|cmd|bat|ps1))?$/i;
+  if ([process.execPath, process.argv0, process.argv?.[0], process.argv?.[1]].some((value) =>
+    typeof value === "string" && executablePattern.test(value)
+  )) {
+    return true;
+  }
+  const configDir = process.env.OPENCODE_CONFIG_DIR;
+  return typeof configDir === "string" && /(?:^|[\\/])shuvcode[\\/]?$/i.test(configDir);
+}
 
 function nextReportSeq() {
   reportSeq += 1;

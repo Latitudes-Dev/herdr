@@ -11,6 +11,7 @@ const originalEnvironment = {
   HERDR_OMP_IDLE_DEBOUNCE_MS: process.env.HERDR_OMP_IDLE_DEBOUNCE_MS,
   HERDR_PANE_ID: process.env.HERDR_PANE_ID,
   HERDR_PI_STATE_RETRY_MS: process.env.HERDR_PI_STATE_RETRY_MS,
+  HERDR_SHUVPI_STATE_RETRY_MS: process.env.HERDR_SHUVPI_STATE_RETRY_MS,
   HERDR_SOCKET_PATH: process.env.HERDR_SOCKET_PATH,
 };
 
@@ -46,6 +47,7 @@ afterEach(async () => {
 
 const integrations = [
   { name: "Pi", modulePath: "./pi/herdr-agent-state.ts" },
+  { name: "ShuvPi", modulePath: "./shuvpi/herdr-agent-state.ts" },
   { name: "Oh My Pi", modulePath: "./omp/herdr-agent-state.ts" },
 ] as const;
 
@@ -229,6 +231,36 @@ for (const integration of integrations) {
     expect(reportedState()).toBe("working");
   });
 }
+
+test("ShuvPi reports its distinct official identity", async () => {
+  const requests = await startRecordingServer("shuvpi-identity");
+  const { handlers, pi } = createExtensionHarness();
+  const { default: install } = await importFresh("./shuvpi/herdr-agent-state.ts");
+  install(pi);
+
+  await handlers.get("session_start")?.(
+    { reason: "startup" },
+    {
+      hasUI: true,
+      mode: "tui",
+      isIdle: () => true,
+      sessionManager: {
+        getSessionFile: () => "/tmp/shuvpi-session.jsonl",
+        getSessionId: () => "shuvpi-session",
+      },
+    },
+  );
+  await waitFor(() => requests.length >= 2);
+
+  for (const request of requests) {
+    expect(isRecord(request) && isRecord(request.params) ? request.params.source : undefined).toBe(
+      "herdr:shuvpi",
+    );
+    expect(isRecord(request) && isRecord(request.params) ? request.params.agent : undefined).toBe(
+      "shuvpi",
+    );
+  }
+});
 
 test("OMP accepts POSIX and Windows session paths", async () => {
   const { isAbsoluteSessionPath } = await importFresh("./omp/herdr-agent-state.ts");

@@ -312,6 +312,31 @@ fn integration_commands_run_locally_when_server_is_missing() {
 }
 
 #[test]
+fn shuvpi_status_marks_a_copied_pi_extension_for_repair() {
+    let base = unique_test_dir();
+    let home_dir = base.join("home");
+    let extensions_dir = home_dir.join(".shuvpi/agent/extensions");
+    fs::create_dir_all(&extensions_dir).unwrap();
+    fs::write(
+        extensions_dir.join("herdr-shuvpi-agent-state.ts"),
+        "// HERDR_INTEGRATION_ID=pi\n// HERDR_INTEGRATION_VERSION=5\n",
+    )
+    .unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_herdr"))
+        .args(["integration", "status"])
+        .env("HOME", &home_dir)
+        .output()
+        .unwrap();
+
+    assert_eq!(output.status.code(), Some(0));
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("shuvpi: needs repair (v5)"));
+
+    cleanup_test_base(&base);
+}
+
+#[test]
 fn integration_status_outdated_only_prints_action_for_legacy_install() {
     let base = unique_test_dir();
     let home_dir = base.join("home");

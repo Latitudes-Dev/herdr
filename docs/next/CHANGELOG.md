@@ -12,6 +12,8 @@
 - `theme.custom.sidebar_bg` can now give the desktop sidebar its own background without changing built-in theme defaults.
 - Settings and `ui.status_indicators = "symbols"` can now use distinct static shapes for blocked, working, done, idle, and unknown agent states. (#2260)
 - The plugin marketplace now discovers valid manifests at repository roots and subdirectories, groups multiple plugins under each repository, and publishes their versions and exact default-branch commits.
+- Added distinct ShuvPi process detection, lifecycle/session integration under `~/.shuvpi`, and native restore with `shuvpi --session <path-or-id>` while preserving upstream Pi support.
+- The OpenCode integration now identifies the ShuvCode fork as `shuvcode` and restores its sessions with the `shuvcode` executable while preserving stock OpenCode identities and existing sessions.
 
 ### Changed
 - Desktop tab labels are now centered in their tabs, so the active-tab highlight has symmetric padding.

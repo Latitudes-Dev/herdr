@@ -10,6 +10,7 @@ pub(crate) const HERDR_TAB_ID_ENV_VAR: &str = "HERDR_TAB_ID";
 pub(crate) const HERDR_WORKSPACE_ID_ENV_VAR: &str = "HERDR_WORKSPACE_ID";
 
 pub(crate) const PI_CODING_AGENT_DIR_ENV_VAR: &str = "PI_CODING_AGENT_DIR";
+pub(crate) const SHUVPI_CODING_AGENT_DIR_ENV_VAR: &str = "SHUVPI_CODING_AGENT_DIR";
 pub(crate) const OMP_CONFIG_DIR_ENV_VAR: &str = "PI_CONFIG_DIR";
 pub(crate) const CLAUDE_CONFIG_DIR_ENV_VAR: &str = "CLAUDE_CONFIG_DIR";
 pub(crate) const CODEX_HOME_ENV_VAR: &str = "CODEX_HOME";
@@ -34,6 +35,13 @@ pub(crate) fn apply_pane_base_env(cmd: &mut CommandBuilder) {
 pub(crate) fn pi_extension_dir() -> io::Result<PathBuf> {
     Ok(
         config_dir_from_env_or_home(PI_CODING_AGENT_DIR_ENV_VAR, &[".pi", "agent"])?
+            .join("extensions"),
+    )
+}
+
+pub(crate) fn shuvpi_extension_dir() -> io::Result<PathBuf> {
+    Ok(
+        config_dir_from_env_or_home(SHUVPI_CODING_AGENT_DIR_ENV_VAR, &[".shuvpi", "agent"])?
             .join("extensions"),
     )
 }

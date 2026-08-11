@@ -46,6 +46,7 @@ beforeEach(() => {
   process.env.HERDR_ENV = "1";
   process.env.HERDR_SOCKET_PATH = "test.sock";
   process.env.HERDR_PANE_ID = "test:p1";
+  delete process.env.OPENCODE_CONFIG_DIR;
 });
 
 async function loadPlugin() {
@@ -89,6 +90,36 @@ test("serializes lifecycle reports", async () => {
   const sequences = requests.map(requestSeq);
   expect(sequences[0]).toEqual(expect.any(Number));
   expect(sequences[1]).toBe((sequences[0] as number) + 1);
+});
+
+test("reports the shuvcode identity from the shuvcode config root", async () => {
+  process.env.OPENCODE_CONFIG_DIR = "/home/user/.config/shuvcode";
+  const plugin = await loadPlugin();
+
+  await plugin.event({
+    event: {
+      type: "session.status",
+      properties: { sessionID: "root-session", status: { type: "busy" } },
+    },
+  });
+
+  expect(requestParam(requests[0], "source")).toBe("herdr:shuvcode");
+  expect(requestParam(requests[0], "agent")).toBe("shuvcode");
+});
+
+test("keeps upstream channel config roots under the opencode identity", async () => {
+  process.env.OPENCODE_CONFIG_DIR = "/home/user/.config/opencode-next";
+  const plugin = await loadPlugin();
+
+  await plugin.event({
+    event: {
+      type: "session.status",
+      properties: { sessionID: "root-session", status: { type: "busy" } },
+    },
+  });
+
+  expect(requestParam(requests[0], "source")).toBe("herdr:opencode");
+  expect(requestParam(requests[0], "agent")).toBe("opencode");
 });
 
 test("suppresses redundant same-session updates", async () => {

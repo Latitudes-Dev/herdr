@@ -26,6 +26,7 @@ pub struct SoundConfig {
 #[serde(default)]
 pub struct AgentSoundOverrides {
     pub pi: AgentSoundSetting,
+    pub shuvpi: AgentSoundSetting,
     pub claude: AgentSoundSetting,
     pub codex: AgentSoundSetting,
     pub gemini: AgentSoundSetting,
@@ -120,6 +121,7 @@ impl AgentSoundOverrides {
     pub fn for_agent(&self, agent: Option<Agent>) -> AgentSoundSetting {
         match agent {
             Some(Agent::Pi) => self.pi,
+            Some(Agent::Shuvpi) => self.shuvpi,
             Some(Agent::Claude) => self.claude,
             Some(Agent::Codex) => self.codex,
             Some(Agent::Gemini) => self.gemini,
@@ -161,6 +163,7 @@ impl Default for AgentSoundOverrides {
     fn default() -> Self {
         Self {
             pi: AgentSoundSetting::Default,
+            shuvpi: AgentSoundSetting::Default,
             claude: AgentSoundSetting::Default,
             codex: AgentSoundSetting::Default,
             gemini: AgentSoundSetting::Default,
@@ -202,6 +205,7 @@ request_path = "/tmp/request.mp3"
 [ui.sound.agents]
 droid = "off"
 claude = "on"
+shuvpi = "off"
 "#;
         let config: Config = toml::from_str(toml).unwrap();
         assert!(config.ui.sound.enabled);
@@ -216,6 +220,7 @@ claude = "on"
         );
         assert_eq!(config.ui.sound.agents.droid, AgentSoundSetting::Off);
         assert_eq!(config.ui.sound.agents.claude, AgentSoundSetting::On);
+        assert_eq!(config.ui.sound.agents.shuvpi, AgentSoundSetting::Off);
         assert_eq!(config.ui.sound.agents.pi, AgentSoundSetting::Default);
     }
 

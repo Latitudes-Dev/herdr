@@ -1025,6 +1025,20 @@ mod tests {
             vec!["pi", "--session", pi_session_path.as_str()]
         );
 
+        let shuvpi_session_path = test_session_path("shuvpi-session.jsonl");
+        let shuvpi_session = super::super::snapshot::PaneAgentSessionSnapshot {
+            source: "herdr:shuvpi".into(),
+            agent: "shuvpi".into(),
+            kind: crate::agent_resume::AgentSessionRefKind::Path,
+            value: shuvpi_session_path.clone(),
+        };
+        assert_eq!(
+            restore_plan_for_snapshot(&shuvpi_session, true)
+                .unwrap()
+                .argv,
+            vec!["shuvpi", "--session", shuvpi_session_path.as_str()]
+        );
+
         let unsupported_path = super::super::snapshot::PaneAgentSessionSnapshot {
             source: "herdr:claude".into(),
             agent: "claude".into(),
