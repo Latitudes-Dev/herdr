@@ -121,6 +121,10 @@ pub struct TerminalState {
     pub id: TerminalId,
     pub cwd: PathBuf,
     pub detected_agent: Option<Agent>,
+    /// Distinct distribution label for the detected process, when it differs
+    /// from the detected agent's canonical label. Always paired with
+    /// `detected_agent` and cleared whenever that agent changes.
+    detected_agent_label: Option<String>,
     pub fallback_state: AgentState,
     fallback_visible_blocker: bool,
     fallback_observed_at: Option<Instant>,
@@ -155,6 +159,7 @@ impl TerminalState {
             id,
             cwd,
             detected_agent: None,
+            detected_agent_label: None,
             fallback_state: AgentState::Unknown,
             fallback_visible_blocker: false,
             fallback_observed_at: None,
@@ -184,11 +189,25 @@ impl TerminalState {
         }
     }
 
+    /// Assign the detected agent, dropping any distribution label that belonged
+    /// to a different agent.
+    fn assign_detected_agent(&mut self, agent: Option<Agent>) {
+        if self.detected_agent != agent {
+            self.detected_agent_label = None;
+        }
+        self.detected_agent = agent;
+    }
+
     pub fn set_detected_agent_process_at(
         &mut self,
         agent: Agent,
+        agent_label: Option<String>,
         now: Instant,
     ) -> TerminalStateMutation {
+        let previous_agent_label = self.effective_agent_label().map(str::to_string);
+        let previous_known_agent = self.effective_known_agent();
+        let previous_state = self.state;
+        let previous_presentation = self.effective_presentation_for_state_at(previous_state, now);
         let starts_acquisition = !self
             .should_ignore_detected_state_under_full_lifecycle_hook(Some(agent), false)
             && !self.detected_state_observed_before_release_suppression(Some(agent), now);
@@ -203,6 +222,21 @@ impl TerminalState {
         );
         if starts_acquisition {
             self.agent_process_acquisition_pending = true;
+        }
+        // Apply the distribution label only after the detected agent is
+        // committed, then recompute so a label-only change still reports.
+        if self.detected_agent == Some(agent) && self.detected_agent_label != agent_label {
+            self.detected_agent_label = agent_label;
+            return TerminalStateMutation {
+                effective_state_change: self.recompute_effective_state(
+                    previous_agent_label,
+                    previous_known_agent,
+                    previous_state,
+                    previous_presentation,
+                    now,
+                ),
+                ..mutation
+            };
         }
         mutation
     }
@@ -344,7 +378,7 @@ impl TerminalState {
                 .and_then(|authority| crate::detect::parse_agent_label(&authority.agent_label))
                 == agent
             {
-                self.detected_agent = agent;
+                self.assign_detected_agent(agent);
             }
             return TerminalStateMutation {
                 effective_state_change: self.recompute_effective_state(
@@ -378,7 +412,7 @@ impl TerminalState {
                 agent_released: false,
             };
         }
-        self.detected_agent = agent;
+        self.assign_detected_agent(agent);
         if let Some(agent) = agent {
             let agent_label = crate::detect::agent_label(agent);
             self.reconcile_agent_name_owner(agent_label, None);
@@ -1779,7 +1813,7 @@ impl TerminalState {
             FullLifecycleHookSuppressionReason::HookClear,
         );
         if !process_owns_agent {
-            self.detected_agent = None;
+            self.assign_detected_agent(None);
             self.fallback_state = AgentState::Unknown;
             self.fallback_visible_blocker = false;
             self.fallback_observed_at = None;
@@ -1818,7 +1852,13 @@ impl TerminalState {
             .or_else(|| {
                 self.recent_agent_process_exit
                     .is_none()
-                    .then(|| self.detected_agent.map(crate::detect::agent_label))
+                    .then(|| {
+                        self.detected_agent.map(|agent| {
+                            self.detected_agent_label
+                                .as_deref()
+                                .unwrap_or_else(|| crate::detect::agent_label(agent))
+                        })
+                    })
                     .flatten()
             })
     }
@@ -2062,7 +2102,7 @@ impl TerminalState {
     }
 
     pub fn clear_agent_runtime_identity_after_respawn(&mut self) {
-        self.detected_agent = None;
+        self.assign_detected_agent(None);
         self.fallback_state = AgentState::Unknown;
         self.fallback_visible_blocker = false;
         self.fallback_observed_at = None;
@@ -4395,6 +4435,64 @@ mod tests {
     }
 
     #[test]
+    fn shuvcode_process_detection_keeps_the_distinct_display_label() {
+        let mut terminal = test_terminal();
+
+        terminal.set_detected_agent_process_at(
+            Agent::OpenCode,
+            Some("shuvcode".into()),
+            Instant::now(),
+        );
+
+        // Detection, manifests, and resume stay on the shared agent.
+        assert_eq!(terminal.detected_agent, Some(Agent::OpenCode));
+        assert_eq!(terminal.effective_known_agent(), Some(Agent::OpenCode));
+        // Only the user-visible label keeps the distribution identity.
+        assert_eq!(terminal.effective_agent_label(), Some("shuvcode"));
+    }
+
+    #[test]
+    fn opencode_process_detection_keeps_the_canonical_display_label() {
+        let mut terminal = test_terminal();
+
+        terminal.set_detected_agent_process_at(Agent::OpenCode, None, Instant::now());
+
+        assert_eq!(terminal.effective_agent_label(), Some("opencode"));
+    }
+
+    #[test]
+    fn shuvcode_label_reports_a_change_when_it_replaces_opencode_in_place() {
+        let mut terminal = test_terminal();
+        terminal.set_detected_agent_process_at(Agent::OpenCode, None, Instant::now());
+
+        let mutation = terminal.set_detected_agent_process_at(
+            Agent::OpenCode,
+            Some("shuvcode".into()),
+            Instant::now(),
+        );
+
+        let change = mutation
+            .effective_state_change
+            .expect("a label-only change must still be reported");
+        assert_eq!(change.previous_agent_label.as_deref(), Some("opencode"));
+        assert_eq!(change.agent_label.as_deref(), Some("shuvcode"));
+    }
+
+    #[test]
+    fn a_different_detected_agent_drops_the_previous_distribution_label() {
+        let mut terminal = test_terminal();
+        terminal.set_detected_agent_process_at(
+            Agent::OpenCode,
+            Some("shuvcode".into()),
+            Instant::now(),
+        );
+
+        terminal.set_detected_state(Some(Agent::Codex), AgentState::Working);
+
+        assert_eq!(terminal.effective_agent_label(), Some("codex"));
+    }
+
+    #[test]
     fn stale_hook_report_sequence_is_ignored_for_same_source() {
         let mut terminal = test_terminal();
         terminal.set_detected_state(Some(Agent::Pi), AgentState::Idle);
@@ -5729,7 +5827,7 @@ mod tests {
             session_ref: crate::agent_resume::AgentSessionRef::id("codex-session").unwrap(),
         });
         terminal.set_detected_state(Some(Agent::Codex), AgentState::Idle);
-        terminal.set_detected_agent_process_at(Agent::Codex, Instant::now());
+        terminal.set_detected_agent_process_at(Agent::Codex, None, Instant::now());
 
         terminal.clear_agent_runtime_identity_after_respawn();
 

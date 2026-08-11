@@ -60,6 +60,9 @@ pub enum AppEvent {
     AgentProcessDetected {
         pane_id: PaneId,
         agent: Agent,
+        /// Distinct distribution label for the detected process, when it differs
+        /// from the agent's canonical label.
+        agent_label: Option<String>,
         observed_at: Instant,
     },
     /// Fallback detector state changed in a pane.

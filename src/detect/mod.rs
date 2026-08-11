@@ -184,6 +184,27 @@ pub(crate) fn parse_canonical_agent_label(label: &str) -> Option<Agent> {
     (agent_label(agent) == label).then_some(agent)
 }
 
+/// Display labels for agent distributions that share another agent's runtime
+/// behavior but keep their own user-visible identity, such as the `shuvcode`
+/// fork of OpenCode.
+///
+/// Only labels listed here may replace an agent's canonical label, so an
+/// arbitrary process name can never become a display label.
+const DISTINCT_DISTRIBUTION_LABELS: &[&str] = &["shuvcode"];
+
+/// Distinct display label for a detected agent process.
+///
+/// Returns `None` when the process uses the agent's canonical label or a name
+/// that does not resolve to `agent`. Detection, resume, and manifest selection
+/// keep using the shared [`Agent`], so only the display label differs.
+pub fn distinct_distribution_label(agent: Agent, process_name: &str) -> Option<String> {
+    let label = normalized_agent_lookup_name(process_name);
+    (DISTINCT_DISTRIBUTION_LABELS.contains(&label.as_str())
+        && lookup_agent(&label) == Some(agent)
+        && agent_label(agent) != label)
+        .then_some(label)
+}
+
 fn lookup_agent(name: &str) -> Option<Agent> {
     match name {
         "pi" => Some(Agent::Pi),
@@ -872,6 +893,38 @@ mod tests {
         assert_eq!(
             identify_agent_in_job(&job),
             Some((Agent::OpenCode, "shuvcode".to_string()))
+        );
+    }
+
+    #[test]
+    fn distinct_distribution_label_keeps_only_known_fork_names() {
+        assert_eq!(
+            distinct_distribution_label(Agent::OpenCode, "shuvcode"),
+            Some("shuvcode".to_string())
+        );
+        assert_eq!(
+            distinct_distribution_label(Agent::OpenCode, "Shuvcode"),
+            Some("shuvcode".to_string())
+        );
+        // The canonical label never becomes a distribution label.
+        assert_eq!(
+            distinct_distribution_label(Agent::OpenCode, "opencode"),
+            None
+        );
+        // Other aliases keep the canonical display label.
+        assert_eq!(
+            distinct_distribution_label(Agent::OpenCode, "opencode-next"),
+            None
+        );
+        assert_eq!(
+            distinct_distribution_label(Agent::Claude, "claude-code"),
+            None
+        );
+        // A name belonging to another agent is never adopted.
+        assert_eq!(distinct_distribution_label(Agent::Codex, "shuvcode"), None);
+        assert_eq!(
+            distinct_distribution_label(Agent::OpenCode, "definitely-not-an-agent"),
+            None
         );
     }
 

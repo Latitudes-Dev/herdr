@@ -220,12 +220,14 @@ async fn publish_agent_process_detected_event(
     state_events: mpsc::Sender<AppEvent>,
     pane_id: PaneId,
     agent: Agent,
+    agent_label: Option<String>,
     observed_at: std::time::Instant,
 ) {
     if let Err(e) = state_events
         .send(AppEvent::AgentProcessDetected {
             pane_id,
             agent,
+            agent_label,
             observed_at,
         })
         .await
@@ -842,6 +844,9 @@ fn spawn_basic_detection_task(
                                 state_events.clone(),
                                 pane_id,
                                 agent,
+                                probe.process_name.as_deref().and_then(|process_name| {
+                                    crate::detect::distinct_distribution_label(agent, process_name)
+                                }),
                                 now,
                             )
                             .await;
@@ -2369,6 +2374,12 @@ impl PaneRuntime {
                                             state_events.clone(),
                                             pane_id,
                                             agent,
+                                            process_name.as_deref().and_then(|process_name| {
+                                                crate::detect::distinct_distribution_label(
+                                                    agent,
+                                                    process_name,
+                                                )
+                                            }),
                                             now,
                                         )
                                         .await;

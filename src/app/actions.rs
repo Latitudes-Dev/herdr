@@ -2779,10 +2779,15 @@ impl AppState {
             AppEvent::AgentProcessDetected {
                 pane_id,
                 agent,
+                agent_label,
                 observed_at,
             } => self
                 .update_terminal_state(pane_id, |terminal| {
-                    Some(terminal.set_detected_agent_process_at(agent, observed_at))
+                    Some(terminal.set_detected_agent_process_at(
+                        agent,
+                        agent_label.clone(),
+                        observed_at,
+                    ))
                 })
                 .into_iter()
                 .collect(),
@@ -5007,6 +5012,7 @@ mod tests {
 
         state.handle_app_event(AppEvent::AgentProcessDetected {
             pane_id,
+            agent_label: None,
             agent: Agent::Pi,
             observed_at: Instant::now(),
         });
@@ -5026,6 +5032,7 @@ mod tests {
 
         state.handle_app_event(AppEvent::AgentProcessDetected {
             pane_id,
+            agent_label: None,
             agent: Agent::Pi,
             observed_at: Instant::now(),
         });
@@ -5062,6 +5069,7 @@ mod tests {
 
         state.handle_app_event(AppEvent::AgentProcessDetected {
             pane_id,
+            agent_label: None,
             agent: Agent::Codex,
             observed_at: Instant::now(),
         });

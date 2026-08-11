@@ -21,6 +21,7 @@
 - Experimental pane graphics now support bounded named layers, acknowledged full-RGBA primary-layer direct file frames on audited local terminals, owned BGRA fallback, exact pixel mouse input, and placement-only resize replay.
 
 ### Fixed
+- ShuvCode panes now display the `shuvcode` label from process detection instead of falling back to `opencode`, so the identity is correct before any lifecycle hook reports.
 - OpenCode integration installs no longer let the v1 plugin filename shadow the ShuvCode v2 plugin package, so ShuvCode loads Herdr lifecycle reporting and displays its distinct `shuvcode` identity.
 - OpenCode panes now track the root conversation selected in their own TUI for native restore without adopting activity from attached clients. (#2450)
 - Server stop requests now bypass pane and API traffic, preventing busy sessions from blocking shutdown or admitting a client while shutdown is pending. (#2612)
