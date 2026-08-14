@@ -224,7 +224,14 @@ pub fn plan(source: &str, agent: &str, session_ref: &AgentSessionRef) -> Option<
             ]
         }
         ("herdr:grok", "grok", AgentSessionRefKind::Id) => {
-            vec!["grok".into(), "--resume".into(), session_ref.value.clone()]
+            let binary = if crate::integration::command_available("grok")
+                || !crate::integration::command_available("shuvgrok")
+            {
+                "grok"
+            } else {
+                "shuvgrok"
+            };
+            vec![binary.into(), "--resume".into(), session_ref.value.clone()]
         }
         _ => return None,
     };
@@ -489,16 +496,20 @@ mod tests {
             .argv,
             vec!["agy", "--conversation", "agy-session"]
         );
-        assert_eq!(
-            plan(
+        {
+            let argv = plan(
                 "herdr:grok",
                 "grok",
-                &AgentSessionRef::id("grok-session").unwrap()
+                &AgentSessionRef::id("grok-session").unwrap(),
             )
             .unwrap()
-            .argv,
-            vec!["grok", "--resume", "grok-session"]
-        );
+            .argv;
+            assert!(
+                argv == ["grok", "--resume", "grok-session"]
+                    || argv == ["shuvgrok", "--resume", "grok-session"],
+                "unexpected grok resume argv: {argv:?}"
+            );
+        }
     }
 
     #[test]

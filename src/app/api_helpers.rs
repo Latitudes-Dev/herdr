@@ -197,9 +197,41 @@ pub(super) fn normalize_reported_agent_label(agent: &str) -> Option<String> {
         return None;
     }
     if let Some(agent) = crate::detect::parse_agent_label(trimmed) {
+        if let Some(label) = crate::detect::distinct_distribution_label(agent, trimmed) {
+            return Some(label);
+        }
         return Some(crate::detect::agent_label(agent).to_string());
     }
     Some(trimmed.to_string())
+}
+
+#[cfg(test)]
+mod reported_agent_label_tests {
+    use super::normalize_reported_agent_label;
+
+    #[test]
+    fn preserves_known_distribution_labels() {
+        assert_eq!(
+            normalize_reported_agent_label("shuvcode").as_deref(),
+            Some("shuvcode")
+        );
+        assert_eq!(
+            normalize_reported_agent_label(" Shuvcode ").as_deref(),
+            Some("shuvcode")
+        );
+    }
+
+    #[test]
+    fn canonicalizes_regular_agent_aliases() {
+        assert_eq!(
+            normalize_reported_agent_label("opencode-next").as_deref(),
+            Some("opencode")
+        );
+        assert_eq!(
+            normalize_reported_agent_label("claude-code").as_deref(),
+            Some("claude")
+        );
+    }
 }
 
 pub(super) const METADATA_TTL_MAX_MS: u64 = 86_400_000;

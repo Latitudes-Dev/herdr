@@ -14,6 +14,14 @@ use std::path::{Path, PathBuf};
 use serde_json::{json, Map, Value};
 
 #[test]
+fn grok_integration_accepts_shuvgrok_command_alias() {
+    assert_eq!(
+        integration_target_command_names(crate::api::schema::IntegrationTarget::Grok),
+        &["grok", "shuvgrok"]
+    );
+}
+
+#[test]
 fn extract_version_triple_parses_common_outputs() {
     assert_eq!(extract_version_triple("0.14.0"), Some((0, 14, 0)));
     assert_eq!(extract_version_triple("v1.2.3"), Some((1, 2, 3)));
