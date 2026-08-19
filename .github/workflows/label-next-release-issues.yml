@@ -24,7 +24,7 @@ jobs:
       - name: Close issues referenced by pushed commits
         shell: bash
         env:
-          GH_TOKEN: ${{ secrets.KANGAL_GITHUB_TOKEN }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
 
@@ -43,7 +43,7 @@ jobs:
           fi
 
           mapfile -t ISSUES < <(
-            git log --format=%b "${RANGE_ARGS[@]}" \
+            git log --first-parent --no-merges --format=%b "${RANGE_ARGS[@]}" \
               | perl -ne 'print "$1\n" if /^\s*refs\s+#([0-9]+)\s*$/i' \
               | sort -nu
           )

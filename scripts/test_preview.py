@@ -216,6 +216,23 @@ file: ../../../public/assets/logo.svg
 
 
 class ConventionalCommitTests(unittest.TestCase):
+    @mock.patch("scripts.conventional_commits.subprocess.check_output")
+    def test_git_subjects_excludes_merged_side_history(self, check_output):
+        check_output.return_value = "fix: update fork\n"
+
+        self.assertEqual(conventional_commits.git_subjects("before..after"), ["fix: update fork"])
+        check_output.assert_called_once_with(
+            [
+                "git",
+                "log",
+                "--first-parent",
+                "--no-merges",
+                "--pretty=format:%s",
+                "before..after",
+            ],
+            text=True,
+        )
+
     def test_valid_subjects_allow_scopes_and_bang(self):
         self.assertTrue(conventional_commits.valid_subject("fix(update): handle preview"))
         self.assertTrue(conventional_commits.valid_subject("feat!: change config"))

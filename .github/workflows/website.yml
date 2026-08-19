@@ -42,6 +42,10 @@ jobs:
         with:
           bun-version: 1.3.14
 
+      - name: Fetch upstream release tags
+        if: github.repository != 'herdrdev/herdr'
+        run: git fetch --no-tags https://github.com/herdrdev/herdr.git 'refs/tags/v*:refs/tags/v*'
+
       - name: Validate published documentation
         run: |
           node website/scripts/docs-versions.mjs check
