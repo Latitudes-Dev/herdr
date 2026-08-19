@@ -71,6 +71,12 @@ pub(crate) struct QodercliInstallPaths {
 }
 
 #[derive(Debug)]
+pub(crate) struct QwenInstallPaths {
+    pub hook_path: PathBuf,
+    pub settings_path: PathBuf,
+}
+
+#[derive(Debug)]
 pub(crate) struct CursorInstallPaths {
     pub hook_path: PathBuf,
     pub hooks_path: PathBuf,
@@ -114,6 +120,14 @@ pub(crate) struct GrokUninstallResult {
 
 #[derive(Debug)]
 pub(crate) struct QodercliUninstallResult {
+    pub hook_path: PathBuf,
+    pub settings_path: PathBuf,
+    pub removed_hook_file: bool,
+    pub updated_settings: bool,
+}
+
+#[derive(Debug)]
+pub(crate) struct QwenUninstallResult {
     pub hook_path: PathBuf,
     pub settings_path: PathBuf,
     pub removed_hook_file: bool,
