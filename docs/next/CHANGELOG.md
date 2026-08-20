@@ -9,6 +9,10 @@
 ### Fixed
 - ShuvCode panes now display the `shuvcode` label from process detection instead of falling back to `opencode`, so the identity is correct before any lifecycle hook reports.
 - OpenCode integration installs no longer let the v1 plugin filename shadow the ShuvCode v2 plugin package, so ShuvCode loads Herdr lifecycle reporting and displays its distinct `shuvcode` identity.
+- Windows panes now keep bare `cursor-agent` launches detected after Cursor hands off to its bundled Node process. (#3032)
+- Claude Code panes now use visible turn, background shell, and background agent activity as working-state fallbacks when OSC titles are unavailable or disabled. (#1630, #2241)
+- Tab bar status commands now remove ESC-prefixed terminal control sequences instead of displaying their sequence bodies as text. (#3001)
+- Unix plugin pane commands now default `PWD` to their resolved working directory, so direct popup tools open at explicit `--cwd` paths while preserving caller-provided `PWD` values. (#2984)
 
 ## [0.8.2] - 2026-08-19
 
@@ -36,6 +40,7 @@
 - Experimental pane graphics now support bounded named layers, acknowledged full-RGBA primary-layer direct file frames on audited local terminals, owned BGRA fallback, exact pixel mouse input, and placement-only resize replay.
 
 ### Fixed
+- Live handoff now preserves mouse forwarding for running pane applications. (#3000, thanks @xkrogen)
 - Unix CLI commands now exit quietly when a downstream pipe closes instead of panicking with exit 101. (#2994)
 - The terminal theme now keeps the active Space row fill visible when the Navigate cursor lands on it, in both expanded and collapsed sidebars. (#2987)
 - Busy multi-pane sessions now avoid redundant hidden-pane wakeups and full terminal-state formatting in pane-scaled paths, preventing CPU regressions from high-rate background output, scrollbars, and enhanced keyboard modes. (#2550, #2901, #2962)
