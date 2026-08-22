@@ -100,6 +100,21 @@ pub(crate) fn tab_surface_hyperlinks(
     links
 }
 
+pub(crate) fn tab_surface_cursor_for_pane_infos(
+    app: &AppState,
+    terminal_runtimes: &TerminalRuntimeRegistry,
+    pane_infos: &[PaneInfo],
+) -> Option<CursorState> {
+    tab_surface_cursor(
+        app,
+        terminal_runtimes,
+        TabSurfaceView {
+            pane_infos,
+            split_borders: &[],
+        },
+    )
+}
+
 pub(crate) fn tab_surface_cursor(
     app: &AppState,
     terminal_runtimes: &TerminalRuntimeRegistry,

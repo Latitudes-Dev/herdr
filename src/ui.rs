@@ -60,7 +60,8 @@ use self::status::{
     toast_notification_rect,
 };
 pub(crate) use self::tab_surface::{
-    compute_tab_surface, render_tab_surface, resize_tab_surface, TabSurfaceLayout,
+    compute_tab_surface, render_tab_surface, resize_tab_surface, tab_surface_cursor_for_pane_infos,
+    TabSurfaceLayout, TabSurfaceView,
 };
 use self::tabs::render_tab_bar;
 pub(crate) use self::{
@@ -95,7 +96,7 @@ pub(crate) use self::{
         mobile_switcher_workspace_doc_range, MobileSwitcherTarget,
     },
     panes::{apply_pane_chrome, pane_inner_rect, pane_is_scrolled_back},
-    tab_surface::{tab_surface_cursor, tab_surface_hyperlinks, TabSurfaceView},
+    tab_surface::{tab_surface_cursor, tab_surface_hyperlinks},
     tabs::{compute_tab_bar_view, tab_bar_content_area},
     widgets::{centered_popup_rect, modal_stack_areas},
 };

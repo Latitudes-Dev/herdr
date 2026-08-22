@@ -7,6 +7,7 @@
 - The OpenCode integration now identifies the ShuvCode fork as `shuvcode` and restores its sessions with the `shuvcode` executable while preserving stock OpenCode identities and existing sessions.
 
 ### Fixed
+- Multi-client sessions now reuse retained PTY updates across client geometries instead of fully rendering the app once per client for every visible output update.
 - ShuvCode panes now display the `shuvcode` label from process detection instead of falling back to `opencode`, so the identity is correct before any lifecycle hook reports.
 - OpenCode integration installs no longer let the v1 plugin filename shadow the ShuvCode v2 plugin package, so ShuvCode loads Herdr lifecycle reporting and displays its distinct `shuvcode` identity.
 - Windows panes now keep bare `cursor-agent` launches detected after Cursor hands off to its bundled Node process. (#3032)

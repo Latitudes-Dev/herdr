@@ -412,6 +412,14 @@ pub(crate) fn focused_terminal_cursor(
     crate::ui::tab_surface_cursor(app_state, terminal_runtimes, app_state.view.tab_surface())
 }
 
+pub(crate) fn focused_terminal_cursor_for_pane_infos(
+    app_state: &AppState,
+    terminal_runtimes: &TerminalRuntimeRegistry,
+    pane_infos: &[crate::layout::PaneInfo],
+) -> Option<CursorState> {
+    crate::ui::tab_surface_cursor_for_pane_infos(app_state, terminal_runtimes, pane_infos)
+}
+
 fn focused_terminal_owns_host_cursor(
     app_state: &AppState,
     terminal_runtimes: &TerminalRuntimeRegistry,
