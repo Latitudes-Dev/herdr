@@ -582,6 +582,7 @@ impl App {
             worktree_open: None,
             worktree_remove: None,
             worktree_directory,
+            worktree_backend: config.worktrees.backend,
             collapsed_space_keys,
             request_complete_onboarding: false,
             name_input: String::new(),
@@ -1615,6 +1616,7 @@ impl App {
         if !invalid_section("worktrees") {
             self.state.worktree_directory =
                 crate::worktree::expand_tilde_absolute_path(&config.worktrees.directory);
+            self.state.worktree_backend = config.worktrees.backend;
         }
 
         if !invalid_section("theme") {
@@ -6257,6 +6259,7 @@ last_pane = "prefix+tab"
         app.state.name_input = "generated-branch".into();
         app.state.name_input_replace_on_type = true;
         app.state.worktree_create = Some(state::WorktreeCreateState {
+            backend: crate::config::WorktreeBackendConfig::Git,
             source_workspace_id: "source".into(),
             source_checkout_path: "/repo/herdr".into(),
             source_existing_membership: None,

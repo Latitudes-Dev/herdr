@@ -1413,6 +1413,13 @@
           "type": "string",
           "default": "\"~/.herdr/worktrees\"",
           "description": "Root directory under which Herdr creates <repo>/<branch-slug> checkouts."
+        },
+        {
+          "key": "worktrees.backend",
+          "type": "enum",
+          "default": "\"git\"",
+          "values": ["git", "jj"],
+          "description": "Repository tool used to create, list, open, and remove linked checkouts."
         }
       ]
     },

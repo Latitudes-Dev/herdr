@@ -269,6 +269,7 @@ const DEFAULT_CONFIG: &str = r##"# herdr configuration
 
 # [worktrees]
 # directory = "~/.herdr/worktrees"
+# backend = "git" # git | jj
 
 [ui]
 # Sidebar width (auto-scaled based on workspace names, this sets the default)

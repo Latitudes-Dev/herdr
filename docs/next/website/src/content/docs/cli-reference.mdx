@@ -141,9 +141,9 @@ herdr worktree open [--workspace ID | --cwd PATH] (--path PATH | --branch NAME) 
 herdr worktree remove --workspace ID [--force]
 ```
 
-Worktrees are normal Herdr workspaces with Git checkout provenance. `worktree create` creates a Git worktree checkout, opens it as a workspace, and groups it with the parent repo workspace. If `--branch` names an existing local branch, Herdr checks it out; otherwise it creates the branch from `--base` or `HEAD`. Without `--path`, Herdr creates the checkout under `<worktrees.directory>/<repo>/<branch-slug>`.
+Worktrees are normal Herdr workspaces with linked-checkout provenance. Commands use `worktrees.backend`, which defaults to `git`. The Git backend treats `--branch` as a local branch and `--base` as its starting ref. The `jj` backend treats `--branch` as the JJ workspace name; the default creates a sibling working-copy commit like `jj workspace add`, while an explicit non-`HEAD` `--base` supplies its parent revision. Without `--path`, Herdr creates the checkout under `<worktrees.directory>/<repo>/<name-slug>`.
 
-`workspace close` closes only Herdr state. Closing a primary workspace while linked-worktree workspaces are open requires `--group`; without it, the command leaves the group open and returns `workspace_group_close_required`. To delete the checkout, run `worktree remove`. It runs `git worktree remove`, never deletes the branch, and requires `--force` when Git refuses a dirty checkout.
+`workspace close` closes only Herdr state. Closing a primary workspace while linked-checkout workspaces are open requires `--group`; without it, the command leaves the group open and returns `workspace_group_close_required`. To delete the checkout, run `worktree remove`. Herdr uses Git or JJ based on the checkout metadata and requires `--force` before discarding modified files.
 
 ## Tabs
 

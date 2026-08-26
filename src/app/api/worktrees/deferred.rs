@@ -73,14 +73,12 @@ impl App {
             }
             return self.find_parent_workspace_by_key(&api.repo_key);
         }
-        let git_space = workspace.git_space().cloned().or_else(|| {
-            workspace
-                .resolved_identity_cwd_from(&self.state.terminals, &self.terminal_runtimes)
-                .as_deref()
-                .and_then(crate::workspace::git_space_metadata)
-        });
-        if git_space.is_some_and(|space| {
-            !space.is_linked_worktree
+        let checkout_space = workspace
+            .resolved_identity_cwd_from(&self.state.terminals, &self.terminal_runtimes)
+            .as_deref()
+            .and_then(|cwd| crate::worktree::checkout_space_metadata(api.backend, cwd));
+        if checkout_space.is_some_and(|space| {
+            !space.is_linked_checkout
                 && space.key == api.repo_key
                 && crate::worktree::canonical_or_original(&space.repo_root)
                     == crate::worktree::canonical_or_original(&api.source_repo_root)
@@ -104,7 +102,7 @@ impl App {
                     .duration_since(UNIX_EPOCH)
                     .map(|duration| duration.as_micros().min(u128::from(u64::MAX)) as u64)
                     .unwrap_or(0);
-                crate::worktree::generated_branch_slug(seed)
+                crate::worktree::generated_checkout_name(seed, self.state.worktree_backend)
             })
             .trim()
             .to_string();
@@ -180,6 +178,7 @@ impl App {
             source_repo_root: source.source_repo_root,
             repo_key: source.repo_key,
             repo_name: source.repo_name,
+            backend: source.backend,
             label: params.label,
             focus: params.focus,
             respond_to,
@@ -194,7 +193,8 @@ impl App {
                 Ok(())
             }
             .and_then(|()| {
-                crate::worktree::run_worktree_add_command(
+                crate::worktree::run_checkout_add_command(
+                    api_request.backend,
                     &source_checkout_path,
                     &path,
                     &branch,
@@ -307,11 +307,8 @@ impl App {
             .insert(checkout_key.clone(), operation_id);
         let workspace_snapshot = self.workspace_info(ws_idx);
         let worktree = self.worktree_info_for_membership(&space, None);
-        let command = crate::worktree::build_worktree_remove_command(
-            &space.repo_root,
-            &space.checkout_path,
-            params.force,
-        );
+        let backend =
+            crate::worktree::checkout_backend_for_path(&space.repo_root, &space.checkout_path);
         let api_request = ApiWorktreeRemoveRequest {
             id,
             operation_id,
@@ -323,9 +320,7 @@ impl App {
         let force = params.force;
         let event_tx = self.event_tx.clone();
         std::thread::spawn(move || {
-            let result = crate::worktree::run_worktree_remove_command_with_recovery(
-                &command, &repo_root, &path, force,
-            );
+            let result = crate::worktree::run_checkout_remove(backend, &repo_root, &path, force);
             let _ = event_tx.blocking_send(AppEvent::WorktreeRemoveFinished(Box::new(
                 crate::events::WorktreeRemoveResult {
                     workspace_id: workspace_internal_id,
@@ -381,6 +376,7 @@ impl App {
 
         let source_workspace_idx = self.api_create_source_workspace_idx(&api);
         let mut source = WorktreeSource {
+            backend: api.backend,
             workspace_idx: source_workspace_idx,
             source_checkout_path: api.source_checkout_path,
             source_repo_root: api.source_repo_root,

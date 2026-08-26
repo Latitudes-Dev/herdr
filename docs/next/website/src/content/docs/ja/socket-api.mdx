@@ -275,7 +275,7 @@ reason の候補は `shown`、`disabled`、`rate_limited`、`no_foreground_clien
 
 `client.window_title.clear` はタイトルを `ui.window_title` に戻します。レスポンスは `type: "client_window_title"` で、`changed` と、`set`、`cleared`、`no_foreground_client` のいずれかの reason を含みます。
 
-Worktree メソッドは Git チェックアウトを Herdr ワークスペースとして管理します。`worktree.create` はチェックアウトを作成し、新しい `workspace`、`tab`、`root_pane`、`worktree` のレコードを返します。要求されたブランチがローカルに既存ならそれをチェックアウトし、なければ要求されたベースまたは `HEAD` からブランチを作成します。`worktree.open` は既存のチェックアウトを開くか、すでに開いているワークスペースを返します。`worktree.remove` はリンクされた子ワークスペースに対して `git worktree remove` を実行し、ブランチは決して削除しません。
+Worktree メソッドは `worktrees.backend` を使ってリンク済みチェックアウトを Herdr ワークスペースとして管理します。Git では `branch` と `base` は Git の意味を保ちます。JJ では `branch` がワークスペース名になり、`HEAD` 以外の `base` が親 revset になります。`worktree.remove` はチェックアウト種別を検出し、ブランチまたはコミットを保持します。
 
 元のワークスペースから worktree を作成する:
 
@@ -644,7 +644,7 @@ workspace の get/list 応答は結果の `tokens` マップを公開し、ス�
 ペインのイベント購読には `pane.created`、`pane.updated`、`pane.closed`、`pane.focused`、`pane.moved`、`pane.exited`、`pane.agent_detected`、`pane.output_matched`、`pane.agent_status_changed`、`pane.scroll_changed` があります。ターミナルタイトルの変更は `pane.updated` を発行することがありますが、生のタイトルでスピナーだけが変化し、`terminal_title_stripped` が変わらない場合は発行しません。`pane.scroll_changed` は 1 つの `pane_id` を対象とし、Herdr がスクロールスナップショットの変化を検出するたびに `pane_id`、`workspace_id`、現在の `scroll` 情報を発行します。
 レイアウトのイベント購読には `layout.updated` があります。このイベントは 1 つのタブについて更新済みの `PaneLayoutSnapshot` を運びます。`session.snapshot` でブートストラップするクライアントは、同じ `workspace_id` と `tab_id` のキャッシュ済みレイアウトを置き換えてください。
 
-worktree のイベント購読には `worktree.created`、`worktree.opened`、`worktree.removed` があります。worktree イベントは Git チェックアウトのライフサイクルを記述します。`worktree.created` は開かれた `workspace` と作成された `worktree` を含みます。`worktree.opened` は対象の `workspace`、開かれた `worktree`、`already_open` を含みます。`worktree.removed` は `workspace_id`、削除された `worktree`、`forced` を含みます。
+worktree のイベント購読には `worktree.created`、`worktree.opened`、`worktree.removed` があります。worktree イベントはリンク済みチェックアウトのライフサイクルを記述します。`worktree.created` は開かれた `workspace` と作成された `worktree` を含みます。`worktree.opened` は対象の `workspace`、開かれた `worktree`、`already_open` を含みます。`worktree.removed` は `workspace_id`、削除された `worktree`、`forced` を含みます。
 
 ライフサイクルイベントには `events.subscribe` を使ってください。ワンショットの wait がサポートされる場合、専用の wait ヘルパーが別途ドキュメント化されます。
 
