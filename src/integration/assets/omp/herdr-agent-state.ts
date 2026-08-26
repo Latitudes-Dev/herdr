@@ -442,6 +442,11 @@ export default function (pi) {
       // cancel the retry hold and publish a false Idle.
       return;
     }
+    if (event?.willContinue === true) {
+      // A continuation is already scheduled, so this end is not a settle.
+      // Older builds omit the field and fall through as before.
+      return;
+    }
 
     agentActive = false;
 

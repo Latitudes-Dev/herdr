@@ -131,6 +131,7 @@ pub enum AppEvent {
     /// Remote agent detection manifest update check finished.
     AgentDetectionManifestsUpdated {
         updated: Vec<crate::detect::manifest_update::ManifestUpdateCommit>,
+        activated: Vec<crate::detect::Agent>,
         status: crate::detect::manifest_update::ManifestUpdateStatus,
     },
     /// A pane child emitted one or more executable BEL characters.

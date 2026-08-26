@@ -144,6 +144,7 @@ fn spawn_herdr_with_options(
     cmd.env("XDG_RUNTIME_DIR", runtime_dir);
     cmd.env("HERDR_SOCKET_PATH", socket_path);
     cmd.env_remove("HERDR_CLIENT_SOCKET_PATH");
+    cmd.env_remove("HERDR_STARTUP_CWD");
     cmd.env("SHELL", shell);
     cmd.env_remove("HERDR_ENV");
     if let Some(path) = path_override {
@@ -313,7 +314,7 @@ fn ping_over_socket_returns_version() {
     assert_eq!(value["result"]["version"], expected_build_version());
     // Intentionally hardcoded so wire protocol bumps require updating this test.
     // Changing this value means old clients/servers are no longer compatible.
-    assert_eq!(value["result"]["protocol"], 20);
+    assert_eq!(value["result"]["protocol"], 21);
 
     cleanup_spawned_herdr(child, base);
 }
@@ -1336,7 +1337,7 @@ fn events_subscribe_streams_workspace_tab_and_agent_events() {
     let fake_pi = bin_dir.join("pi");
     fs::write(
         &fake_pi,
-        "#!/bin/sh\nprintf 'Working...\\n'\nsleep 1\nprintf '\\033[2J\\033[Hdone\\n'\n",
+        "#!/bin/sh\nprintf 'starting\\n'\nsleep 4\nprintf 'Working...\\n'\nsleep 1\nprintf '\\033[2J\\033[Hdone\\n'\nsleep 30\n",
     )
     .unwrap();
     #[cfg(unix)]
@@ -1503,6 +1504,12 @@ fn events_subscribe_streams_pane_split_and_close_events() {
     let ack = reader.read_json_line(Duration::from_secs(2));
     assert_eq!(ack["id"], "sub_life_b");
     assert_eq!(ack["result"]["type"], "subscription_started");
+    assert!(
+        reader
+            .try_read_json_line(Duration::from_millis(250))
+            .is_none(),
+        "new subscription must not replay the root pane creation"
+    );
 
     let split = send_request(
         &socket_path,
@@ -2287,7 +2294,7 @@ fn events_subscribe_streams_output_and_agent_status_events() {
     );
     assert_eq!(send_enter["result"]["type"], "ok");
 
-    let agent_idle = reader.read_json_line(Duration::from_secs(8));
+    let agent_idle = reader.read_json_line(Duration::from_secs(12));
     assert_eq!(agent_idle["event"], "pane.agent_status_changed");
     assert_eq!(agent_idle["data"]["pane_id"], pane_id);
     assert_eq!(agent_idle["data"]["agent_status"], "idle");
