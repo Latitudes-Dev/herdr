@@ -438,8 +438,10 @@ fn restored_worktree_space_membership(
 ) -> Option<crate::workspace::WorktreeSpaceMembership> {
     space.filter(|space| {
         space.checkout_path.exists()
-            && crate::workspace::git_space_metadata(&space.checkout_path)
+            && (crate::workspace::git_space_metadata(&space.checkout_path)
                 .is_some_and(|current| current.key == space.key)
+                || crate::worktree::jj_space_metadata(&space.checkout_path)
+                    .is_some_and(|current| current.key == space.key))
     })
 }
 

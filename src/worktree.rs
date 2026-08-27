@@ -1,6 +1,8 @@
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 
+use crate::config::WorktreeBackendConfig;
+
 const DEFAULT_WORKTREE_PREFIX: &str = "worktree";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -18,6 +20,79 @@ pub(crate) struct ExistingWorktree {
     pub is_prunable: bool,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct JjSpaceMetadata {
+    pub key: String,
+    pub repo_name: String,
+    pub workspace_root: PathBuf,
+    pub is_linked_workspace: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct CheckoutSpaceMetadata {
+    pub key: String,
+    pub repo_name: String,
+    pub repo_root: PathBuf,
+    pub is_linked_checkout: bool,
+}
+
+pub(crate) fn checkout_space_metadata(
+    backend: WorktreeBackendConfig,
+    cwd: &Path,
+) -> Option<CheckoutSpaceMetadata> {
+    match backend {
+        WorktreeBackendConfig::Git => {
+            let space = crate::workspace::git_space_metadata(cwd)?;
+            Some(checkout_space_from_git(space))
+        }
+        WorktreeBackendConfig::Jj => {
+            let space = jj_space_metadata(cwd)?;
+            Some(CheckoutSpaceMetadata {
+                key: space.key,
+                repo_name: space.repo_name,
+                repo_root: space.workspace_root,
+                is_linked_checkout: space.is_linked_workspace,
+            })
+        }
+    }
+}
+
+pub(crate) fn checkout_space_from_git(
+    space: crate::workspace::GitSpaceMetadata,
+) -> CheckoutSpaceMetadata {
+    CheckoutSpaceMetadata {
+        key: space.key,
+        repo_name: space.repo_name,
+        repo_root: space.repo_root,
+        is_linked_checkout: space.is_linked_worktree,
+    }
+}
+
+pub(crate) fn jj_space_metadata(cwd: &Path) -> Option<JjSpaceMetadata> {
+    let start = if cwd.is_dir() { cwd } else { cwd.parent()? };
+    let workspace_root = start
+        .ancestors()
+        .find(|ancestor| ancestor.join(".jj").is_dir())?
+        .to_path_buf();
+    let repo_entry = workspace_root.join(".jj/repo");
+    let is_linked_workspace = repo_entry.is_file();
+    let repo_store = if is_linked_workspace {
+        let target = std::fs::read_to_string(&repo_entry).ok()?;
+        workspace_root.join(".jj").join(target.trim())
+    } else {
+        repo_entry
+    };
+    let repo_store = canonical_or_original(&repo_store);
+    let primary_root = repo_store.parent()?.parent()?;
+    let repo_name = primary_root.file_name()?.to_string_lossy().into_owned();
+    Some(JjSpaceMetadata {
+        key: repo_store.display().to_string(),
+        repo_name,
+        workspace_root,
+        is_linked_workspace,
+    })
+}
+
 pub(crate) fn generated_branch_slug(seed: u64) -> String {
     let adjectives = [
         "brave", "calm", "clear", "green", "lucky", "quiet", "rapid", "silver",
@@ -29,6 +104,14 @@ pub(crate) fn generated_branch_slug(seed: u64) -> String {
     let noun = nouns[((seed / adjectives.len() as u64) as usize) % nouns.len()];
     let suffix = seed & 0xffff;
     format!("{DEFAULT_WORKTREE_PREFIX}/{adjective}-{noun}-{suffix:04x}")
+}
+
+pub(crate) fn generated_checkout_name(seed: u64, backend: WorktreeBackendConfig) -> String {
+    let name = generated_branch_slug(seed);
+    match backend {
+        WorktreeBackendConfig::Git => name,
+        WorktreeBackendConfig::Jj => name.strip_prefix("worktree/").unwrap_or(&name).to_string(),
+    }
 }
 
 pub(crate) fn branch_to_path_slug(branch: &str) -> String {
@@ -305,6 +388,37 @@ pub(crate) fn run_worktree_add_command(
     run_worktree_command(&command)
 }
 
+pub(crate) fn run_checkout_add_command(
+    backend: WorktreeBackendConfig,
+    repo_root: &Path,
+    path: &Path,
+    name: &str,
+    base: &str,
+) -> Result<(), String> {
+    match backend {
+        WorktreeBackendConfig::Git => run_worktree_add_command(repo_root, path, name, base),
+        WorktreeBackendConfig::Jj => {
+            let mut args = vec![
+                "-R".to_string(),
+                repo_root.display().to_string(),
+                "workspace".to_string(),
+                "add".to_string(),
+                "--name".to_string(),
+                name.to_string(),
+            ];
+            if base != "HEAD" {
+                args.extend(["-r".to_string(), base.to_string()]);
+            }
+            args.push(path.display().to_string());
+            let command = WorktreeCommand {
+                program: "jj".to_string(),
+                args,
+            };
+            run_worktree_command(&command)
+        }
+    }
+}
+
 pub(crate) fn run_worktree_command(command: &WorktreeCommand) -> Result<(), String> {
     let output = crate::noninteractive_process::command(&command.program)
         .args(&command.args)
@@ -491,6 +605,222 @@ pub(crate) fn list_existing_worktrees(repo_root: &Path) -> Result<Vec<ExistingWo
     })
 }
 
+pub(crate) fn list_existing_checkouts(
+    backend: WorktreeBackendConfig,
+    repo_root: &Path,
+) -> Result<Vec<ExistingWorktree>, String> {
+    match backend {
+        WorktreeBackendConfig::Git => list_existing_worktrees(repo_root),
+        WorktreeBackendConfig::Jj => list_existing_jj_workspaces(repo_root),
+    }
+}
+
+fn list_existing_jj_workspaces(repo_root: &Path) -> Result<Vec<ExistingWorktree>, String> {
+    let output = crate::noninteractive_process::command("jj")
+        .arg("-R")
+        .arg(repo_root)
+        .args([
+            "--ignore-working-copy",
+            "workspace",
+            "list",
+            "-T",
+            "name ++ \"\\0\" ++ root ++ \"\\0\"",
+        ])
+        .output()
+        .map_err(|err| err.to_string())?;
+    if !output.status.success() {
+        return Err(command_output_error("jj workspace list", &output));
+    }
+
+    parse_jj_workspace_list(&output.stdout)
+}
+
+fn parse_jj_workspace_list(output: &[u8]) -> Result<Vec<ExistingWorktree>, String> {
+    let mut entries = Vec::new();
+    let fields = output.split(|byte| *byte == 0).collect::<Vec<_>>();
+    for pair in fields.chunks_exact(2) {
+        let name = String::from_utf8(pair[0].to_vec()).map_err(|err| err.to_string())?;
+        let root = String::from_utf8(pair[1].to_vec()).map_err(|err| err.to_string())?;
+        let (path, is_prunable) = if root.starts_with("<Error:") {
+            let marker = format!("workspace root: {name}: ");
+            let path = root
+                .split_once(&marker)
+                .and_then(|(_, rest)| rest.rsplit_once(": ").map(|(path, _)| path))
+                .map(Path::new)
+                .map(lexical_normalize)
+                .unwrap_or_default();
+            (path, true)
+        } else {
+            (PathBuf::from(root), false)
+        };
+        entries.push(ExistingWorktree {
+            path,
+            branch: Some(name),
+            is_bare: false,
+            is_detached: false,
+            is_prunable,
+        });
+    }
+    Ok(entries)
+}
+
+fn lexical_normalize(path: &Path) -> PathBuf {
+    let mut normalized = PathBuf::new();
+    for component in path.components() {
+        match component {
+            std::path::Component::CurDir => {}
+            std::path::Component::ParentDir => {
+                normalized.pop();
+            }
+            _ => normalized.push(component.as_os_str()),
+        }
+    }
+    normalized
+}
+
+pub(crate) fn checkout_backend_for_path(repo_root: &Path, path: &Path) -> WorktreeBackendConfig {
+    let is_jj = jj_space_metadata(path).is_some_and(|space| space.is_linked_workspace)
+        || (jj_space_metadata(repo_root).is_some()
+            && list_existing_jj_workspaces(repo_root).is_ok_and(|entries| {
+                entries
+                    .iter()
+                    .any(|entry| canonical_or_original(&entry.path) == canonical_or_original(path))
+            }));
+    if is_jj {
+        WorktreeBackendConfig::Jj
+    } else {
+        WorktreeBackendConfig::Git
+    }
+}
+
+pub(crate) fn checkout_name(
+    backend: WorktreeBackendConfig,
+    repo_root: &Path,
+    path: &Path,
+) -> Option<String> {
+    match backend {
+        WorktreeBackendConfig::Git => crate::workspace::git_branch(path),
+        WorktreeBackendConfig::Jj => list_existing_jj_workspaces(repo_root)
+            .ok()?
+            .into_iter()
+            .find(|entry| canonical_or_original(&entry.path) == canonical_or_original(path))
+            .and_then(|entry| entry.branch),
+    }
+}
+
+fn command_output_error(label: &str, output: &std::process::Output) -> String {
+    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if !stderr.is_empty() {
+        stderr
+    } else if !stdout.is_empty() {
+        stdout
+    } else {
+        format!("{label} failed with status {}", output.status)
+    }
+}
+
+pub(crate) fn run_checkout_remove(
+    backend: WorktreeBackendConfig,
+    repo_root: &Path,
+    path: &Path,
+    force: bool,
+) -> Result<(), String> {
+    match backend {
+        WorktreeBackendConfig::Git => {
+            let command = build_worktree_remove_command(repo_root, path, force);
+            run_worktree_remove_command_with_recovery(&command, repo_root, path, force)
+        }
+        WorktreeBackendConfig::Jj => run_jj_workspace_remove(repo_root, path, force),
+    }
+}
+
+fn run_jj_workspace_remove(repo_root: &Path, path: &Path, force: bool) -> Result<(), String> {
+    let expected_key = jj_space_metadata(repo_root)
+        .ok_or_else(|| "source is not a Jujutsu repository".to_string())?
+        .key;
+    let workspace_name = list_existing_jj_workspaces(repo_root)?
+        .into_iter()
+        .find(|entry| canonical_or_original(&entry.path) == canonical_or_original(path))
+        .and_then(|entry| entry.branch)
+        .ok_or_else(|| format!("Jujutsu workspace for {} was not found", path.display()))?;
+
+    if !path.exists() {
+        return forget_jj_workspace(repo_root, &workspace_name);
+    }
+    if !path.join(".jj").is_dir() {
+        return Err(format!("{} is not a Jujutsu workspace", path.display()));
+    }
+    let target = jj_space_metadata(path)
+        .ok_or_else(|| format!("{} is not a Jujutsu workspace", path.display()))?;
+    if target.key != expected_key || !target.is_linked_workspace {
+        return Err(format!(
+            "{} is not a linked workspace for this Jujutsu repository",
+            path.display()
+        ));
+    }
+
+    let update = crate::noninteractive_process::command("jj")
+        .arg("-R")
+        .arg(path)
+        .args(["workspace", "update-stale"])
+        .output()
+        .map_err(|err| err.to_string())?;
+    if !update.status.success() {
+        return Err(command_output_error("jj workspace update-stale", &update));
+    }
+    let status = crate::noninteractive_process::command("jj")
+        .arg("-R")
+        .arg(path)
+        .arg("status")
+        .output()
+        .map_err(|err| err.to_string())?;
+    if !status.status.success() {
+        return Err(command_output_error("jj status", &status));
+    }
+
+    if !force {
+        let output = crate::noninteractive_process::command("jj")
+            .arg("-R")
+            .arg(path)
+            .args(["diff", "--summary"])
+            .output()
+            .map_err(|err| err.to_string())?;
+        if !output.status.success() {
+            return Err(command_output_error("jj diff --summary", &output));
+        }
+        if !output.stdout.is_empty() {
+            return Err(format!(
+                "fatal: '{}' contains modified or untracked files, use --force to delete it",
+                path.display()
+            ));
+        }
+    }
+
+    std::fs::remove_dir_all(path)
+        .map_err(|err| format!("failed to remove {}: {err}", path.display()))?;
+    forget_jj_workspace(repo_root, &workspace_name).map_err(|err| {
+        format!(
+            "removed {}, but failed to forget Jujutsu workspace {workspace_name}: {err}",
+            path.display()
+        )
+    })
+}
+
+fn forget_jj_workspace(repo_root: &Path, workspace_name: &str) -> Result<(), String> {
+    let forget = crate::noninteractive_process::command("jj")
+        .arg("-R")
+        .arg(repo_root)
+        .args(["workspace", "forget"])
+        .arg(workspace_name)
+        .output()
+        .map_err(|err| err.to_string())?;
+    if !forget.status.success() {
+        return Err(command_output_error("jj workspace forget", &forget));
+    }
+    Ok(())
+}
+
 pub(crate) fn worktree_list_contains_path(repo_root: &Path, path: &Path) -> Result<bool, String> {
     let expected = canonical_or_original(path);
     Ok(list_existing_worktrees(repo_root)?
@@ -535,6 +865,13 @@ mod tests {
         run_git(&repo, &["add", "README.md"]);
         run_git(&repo, &["commit", "--quiet", "-m", "initial"]);
         repo
+    }
+
+    fn jj_available() -> bool {
+        std::process::Command::new("jj")
+            .arg("--version")
+            .output()
+            .is_ok_and(|output| output.status.success())
     }
 
     #[test]
@@ -587,6 +924,140 @@ prunable stale
                 },
             ]
         );
+    }
+
+    #[test]
+    fn parses_missing_jj_workspace_as_prunable() {
+        let output = b"default\0/repo\0gone\0<Error: Failed to resolve workspace root: gone: /tmp/gone: No such file or directory (os error 2)>\0";
+        assert_eq!(
+            parse_jj_workspace_list(output).unwrap(),
+            vec![
+                ExistingWorktree {
+                    path: PathBuf::from("/repo"),
+                    branch: Some("default".into()),
+                    is_bare: false,
+                    is_detached: false,
+                    is_prunable: false,
+                },
+                ExistingWorktree {
+                    path: PathBuf::from("/tmp/gone"),
+                    branch: Some("gone".into()),
+                    is_bare: false,
+                    is_detached: false,
+                    is_prunable: true,
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn jj_workspace_lifecycle_uses_native_checkout_metadata() {
+        if !jj_available() {
+            return;
+        }
+        let repo = create_committed_repo("jj-workspace-lifecycle-repo");
+        let init = std::process::Command::new("jj")
+            .args(["git", "init", "--colocate"])
+            .arg(&repo)
+            .status()
+            .unwrap();
+        assert!(init.success());
+
+        let checkout = unique_temp_path("jj-workspace-lifecycle-checkout");
+        let parent = checkout.parent().unwrap();
+        std::fs::create_dir_all(parent).unwrap();
+        run_checkout_add_command(
+            WorktreeBackendConfig::Jj,
+            &repo,
+            &checkout,
+            "herdr-test",
+            "@",
+        )
+        .unwrap();
+
+        let source = jj_space_metadata(&repo).unwrap();
+        let linked = jj_space_metadata(&checkout).unwrap();
+        assert_eq!(source.key, linked.key);
+        assert!(linked.is_linked_workspace);
+        assert!(list_existing_checkouts(WorktreeBackendConfig::Jj, &repo)
+            .unwrap()
+            .iter()
+            .any(|entry| entry.path == checkout && entry.branch.as_deref() == Some("herdr-test")));
+
+        std::fs::write(checkout.join("README.md"), "changed\n").unwrap();
+        let err = run_checkout_remove(WorktreeBackendConfig::Jj, &repo, &checkout, false)
+            .expect_err("changed workspace should require force");
+        assert!(is_dirty_worktree_remove_error(&err));
+        run_checkout_remove(WorktreeBackendConfig::Jj, &repo, &checkout, true).unwrap();
+        assert!(!checkout.exists());
+        let heads = std::process::Command::new("jj")
+            .arg("-R")
+            .arg(&repo)
+            .args([
+                "--ignore-working-copy",
+                "log",
+                "-r",
+                "heads(all())",
+                "--no-graph",
+                "-T",
+                "commit_id ++ \"\\0\"",
+            ])
+            .output()
+            .unwrap();
+        assert!(heads.status.success());
+        let preserved = heads
+            .stdout
+            .split(|byte| *byte == 0)
+            .filter(|commit| !commit.is_empty())
+            .any(|commit| {
+                let content = std::process::Command::new("jj")
+                    .arg("-R")
+                    .arg(&repo)
+                    .args(["--ignore-working-copy", "file", "show", "-r"])
+                    .arg(String::from_utf8_lossy(commit).as_ref())
+                    .arg("root:README.md")
+                    .output()
+                    .unwrap();
+                content.status.success() && content.stdout == b"changed\n"
+            });
+        assert!(
+            preserved,
+            "forced removal must preserve the snapshotted commit"
+        );
+
+        let _ = std::fs::remove_dir_all(repo);
+    }
+
+    #[test]
+    fn jj_workspace_remove_forgets_missing_checkout() {
+        if !jj_available() {
+            return;
+        }
+        let repo = create_committed_repo("jj-workspace-missing-repo");
+        let init = std::process::Command::new("jj")
+            .args(["git", "init", "--colocate"])
+            .arg(&repo)
+            .status()
+            .unwrap();
+        assert!(init.success());
+        let checkout = unique_temp_path("jj-workspace-missing-checkout");
+        std::fs::create_dir_all(checkout.parent().unwrap()).unwrap();
+        run_checkout_add_command(
+            WorktreeBackendConfig::Jj,
+            &repo,
+            &checkout,
+            "missing-test",
+            "HEAD",
+        )
+        .unwrap();
+        std::fs::remove_dir_all(&checkout).unwrap();
+
+        run_checkout_remove(WorktreeBackendConfig::Jj, &repo, &checkout, true).unwrap();
+        assert!(!list_existing_checkouts(WorktreeBackendConfig::Jj, &repo)
+            .unwrap()
+            .iter()
+            .any(|entry| entry.branch.as_deref() == Some("missing-test")));
+        let _ = std::fs::remove_dir_all(repo);
     }
 
     #[test]

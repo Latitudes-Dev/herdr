@@ -93,20 +93,21 @@ new_cwd = "follow"
 
 ## Worktree
 
-设置 Herdr 从侧边栏创建 Git worktree 检出时使用的根目录：
+设置 Herdr 从侧边栏创建链接检出时使用的根目录和仓库工具：
 
 ```toml
 [worktrees]
 directory = "~/.herdr/worktrees"
+backend = "git" # "git" 或 "jj"
 ```
 
-Herdr 会在 `<directory>/<repo>/<branch-slug>` 下创建检出。若要使用同级目录风格的检出，请将其设置为 `~/Projects/herdr-worktrees` 这样的目录。应用配置时，相对路径会解析为绝对路径。
+Herdr 会在 `<directory>/<repo>/<name-slug>` 下创建检出。`backend` 默认为 `"git"`；设为 `"jj"` 后，Herdr 会通过 `jj workspace add` 创建原生 Jujutsu 工作区。
 
-Git 工作区行提供 worktree 操作。`New worktree` 会创建检出：如果输入的分支已存在，则检出该本地分支，否则创建该分支；随后将其作为新的 Herdr 工作区打开，并归组到来源工作区下。`Open worktree...` 会列出该仓库现有的 Git worktree 检出；选择已打开的检出会聚焦它，选择尚未打开的检出会在同一组中打开它。
+仓库工作区行提供 worktree 操作。Git 后端会检出或创建本地分支；JJ 后端会从来源工作副本提交创建命名工作区。`Open worktree...` 会列出所配置后端的现有检出。
 
 归组的 worktree 仍像普通 Herdr 工作区一样工作：可以聚焦、重命名和关闭，也可以拥有自己的标签页和窗格。父行是原始工作区。关闭父行会关闭整个 Herdr 组，但不会删除检出目录或分支。
 
-删除 worktree 检出需要显式操作。在归组的子工作区上使用 `Delete worktree checkout...` 来运行 `git worktree remove`。Herdr 会先请求 Git 安全删除。如果 Git 因检出中存在已修改或未跟踪的文件而拒绝，Herdr 会在强制删除前再次确认。分支不会被删除。
+删除链接检出需要显式操作。Herdr 会使用创建该检出的工具，并在丢弃已修改文件前再次确认。JJ 工作区会通过 `jj workspace forget` 注销，底层 Git 分支或 JJ 提交会保留。
 
 ## 远程连接
 

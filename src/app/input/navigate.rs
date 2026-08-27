@@ -1910,12 +1910,22 @@ fn workspace_can_start_worktree_action(
     {
         return false;
     }
-    let git_space = ws.git_space().cloned().or_else(|| {
-        ws.resolved_identity_cwd_from(&state.terminals, terminal_runtimes)
+    let checkout_space = match state.worktree_backend {
+        crate::config::WorktreeBackendConfig::Git => ws
+            .git_space()
+            .cloned()
+            .or_else(|| {
+                ws.resolved_identity_cwd_from(&state.terminals, terminal_runtimes)
+                    .as_deref()
+                    .and_then(crate::workspace::git_space_metadata)
+            })
+            .map(crate::worktree::checkout_space_from_git),
+        crate::config::WorktreeBackendConfig::Jj => ws
+            .resolved_identity_cwd_from(&state.terminals, terminal_runtimes)
             .as_deref()
-            .and_then(crate::workspace::git_space_metadata)
-    });
-    !git_space.is_some_and(|space| space.is_linked_worktree)
+            .and_then(|cwd| crate::worktree::checkout_space_metadata(state.worktree_backend, cwd)),
+    };
+    !checkout_space.is_some_and(|space| space.is_linked_checkout)
 }
 
 // Translate a one-step move into the pre-removal insertion slot that

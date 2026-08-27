@@ -20,6 +20,7 @@ pub struct ApiWorktreeAddRequest {
     pub source_repo_root: std::path::PathBuf,
     pub repo_key: String,
     pub repo_name: String,
+    pub backend: crate::config::WorktreeBackendConfig,
     pub label: Option<String>,
     pub focus: bool,
     pub respond_to: std::sync::mpsc::Sender<String>,

@@ -830,11 +830,21 @@ pub struct IndexedKeysConfig {
     pub agents: String,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum WorktreeBackendConfig {
+    #[default]
+    Git,
+    Jj,
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(default)]
 pub struct WorktreesConfig {
     /// Root directory under which Herdr creates <repo>/<branch-slug> checkouts.
     pub directory: String,
+    /// Tool used to create and manage linked checkouts. Default: git.
+    pub backend: WorktreeBackendConfig,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize, Default)]
@@ -1094,6 +1104,7 @@ impl Default for WorktreesConfig {
     fn default() -> Self {
         Self {
             directory: "~/.herdr/worktrees".into(),
+            backend: WorktreeBackendConfig::Git,
         }
     }
 }
@@ -1444,13 +1455,16 @@ tab_bar_right_separator = " · "
     fn worktrees_directory_defaults_and_parses() {
         let default_config = Config::default();
         assert_eq!(default_config.worktrees.directory, "~/.herdr/worktrees");
+        assert_eq!(default_config.worktrees.backend, WorktreeBackendConfig::Git);
 
         let toml = r#"
 [worktrees]
 directory = "~/Projects/herdr-worktrees"
+backend = "jj"
 "#;
         let config: Config = toml::from_str(toml).unwrap();
         assert_eq!(config.worktrees.directory, "~/Projects/herdr-worktrees");
+        assert_eq!(config.worktrees.backend, WorktreeBackendConfig::Jj);
     }
 
     #[test]

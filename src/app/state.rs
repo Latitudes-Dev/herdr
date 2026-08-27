@@ -744,6 +744,7 @@ pub struct WorkspaceCardArea {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WorktreeCreateState {
+    pub backend: crate::config::WorktreeBackendConfig,
     pub source_workspace_id: String,
     pub source_checkout_path: std::path::PathBuf,
     pub source_existing_membership: Option<crate::workspace::WorktreeSpaceMembership>,
@@ -1503,6 +1504,7 @@ pub struct AppState {
     pub worktree_open: Option<WorktreeOpenState>,
     pub worktree_remove: Option<WorktreeRemoveState>,
     pub worktree_directory: std::path::PathBuf,
+    pub worktree_backend: crate::config::WorktreeBackendConfig,
     pub collapsed_space_keys: std::collections::HashSet<String>,
     pub request_complete_onboarding: bool,
     pub name_input: String,
@@ -1888,6 +1890,7 @@ impl AppState {
             worktree_open: None,
             worktree_remove: None,
             worktree_directory: std::path::PathBuf::from("/tmp/herdr-worktrees"),
+            worktree_backend: crate::config::WorktreeBackendConfig::Git,
             collapsed_space_keys: std::collections::HashSet::new(),
             request_complete_onboarding: false,
             name_input: String::new(),

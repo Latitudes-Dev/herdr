@@ -275,7 +275,7 @@ herdr notification show "build failed" --body "api workspace" --position top-lef
 
 `client.window_title.clear` 把标题交还给 `ui.window_title`。响应是 `type: "client_window_title"`,带 `changed` 和 `set`、`cleared` 或 `no_foreground_client` 之一的 reason。
 
-Worktree 方法把 Git 检出作为 Herdr 工作区管理。`worktree.create` 创建检出,并返回新的 `workspace`、`tab`、`root_pane` 和 `worktree` 记录。请求的分支已在本地存在时检出它;否则从请求的 base 或 `HEAD` 创建分支。`worktree.open` 打开已有检出,或返回已打开的工作区。`worktree.remove` 对关联的子工作区运行 `git worktree remove`,从不删除分支。
+Worktree 方法通过 `worktrees.backend` 把链接检出作为 Herdr 工作区管理。使用 Git 时，`branch` 和 `base` 保持 Git 语义；使用 JJ 时，`branch` 是工作区名称，非 `HEAD` 的 `base` 是父 revset。`worktree.remove` 会检测检出类型，并保留对应的分支或提交。
 
 从来源工作区创建 worktree:
 
@@ -640,7 +640,7 @@ workspace 的 get/list 响应会公开生成的 `tokens` 映射,空间侧边栏�
 窗格事件订阅包括 `pane.created`、`pane.updated`、`pane.closed`、`pane.focused`、`pane.moved`、`pane.exited`、`pane.agent_detected`、`pane.output_matched`、`pane.agent_status_changed` 和 `pane.scroll_changed`。终端标题变化可能发出 `pane.updated`,但如果原始标题只有旋转指示符发生变化且 `terminal_title_stripped` 不变,则不会发出。`pane.scroll_changed` 只针对一个 `pane_id`,每当 Herdr 观察到滚动快照变化时,都会发出 `pane_id`、`workspace_id` 和当前 `scroll` 指标。
 布局事件订阅包括 `layout.updated`。该事件携带一个标签页更新后的 `PaneLayoutSnapshot`。使用 `session.snapshot` 引导的客户端应替换具有相同 `workspace_id` 和 `tab_id` 的缓存布局。
 
-Worktree 事件订阅包括 `worktree.created`、`worktree.opened` 和 `worktree.removed`。Worktree 事件描述 Git 检出的生命周期。`worktree.created` 包含打开的 `workspace` 和创建的 `worktree`。`worktree.opened` 包含目标 `workspace`、打开的 `worktree` 和 `already_open`。`worktree.removed` 包含 `workspace_id`、被移除的 `worktree` 和 `forced`。
+Worktree 事件订阅包括 `worktree.created`、`worktree.opened` 和 `worktree.removed`。Worktree 事件描述链接检出的生命周期。`worktree.created` 包含打开的 `workspace` 和创建的 `worktree`。`worktree.opened` 包含目标 `workspace`、打开的 `worktree` 和 `already_open`。`worktree.removed` 包含 `workspace_id`、被移除的 `worktree` 和 `forced`。
 
 生命周期事件用 `events.subscribe`。支持一次性等待时,专门的等待辅助命令会单独在文档中说明。
 

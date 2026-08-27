@@ -37,6 +37,7 @@ fn absolute_user_path(path: &str) -> Result<PathBuf, ApiFailure> {
 }
 
 struct WorktreeSource {
+    backend: crate::config::WorktreeBackendConfig,
     workspace_idx: Option<usize>,
     source_checkout_path: PathBuf,
     source_repo_root: PathBuf,
@@ -54,7 +55,10 @@ impl App {
             Ok(source) => source,
             Err(err) => return encode_error(id, err.code, err.message),
         };
-        let entries = match crate::worktree::list_existing_worktrees(&source.source_repo_root) {
+        let entries = match crate::worktree::list_existing_checkouts(
+            source.backend,
+            &source.source_repo_root,
+        ) {
             Ok(entries) => entries,
             Err(err) => return encode_error(id, "worktree_list_failed", err),
         };
@@ -195,20 +199,23 @@ impl App {
 
         if let Some(cwd) = cwd {
             let path = absolute_user_path(&cwd)?;
-            let space = crate::workspace::git_space_metadata(&path).ok_or_else(|| {
-                ApiFailure::new(
+            let backend = self.state.worktree_backend;
+            let space =
+                crate::worktree::checkout_space_metadata(backend, &path).ok_or_else(|| {
+                    ApiFailure::new(
                     "not_git_worktree",
-                    "Herdr worktree actions require a path inside a Git work tree",
+                    "Herdr worktree actions require a path inside the configured repository type",
                 )
-            })?;
-            if space.is_linked_worktree {
+                })?;
+            if space.is_linked_checkout {
                 return Err(ApiFailure::new(
                     "linked_worktree_source",
                     "New and open worktree actions start from the repo parent workspace.",
                 ));
             }
             let source = WorktreeSource {
-                workspace_idx: self.find_parent_workspace_for_space(&space),
+                backend,
+                workspace_idx: self.find_parent_workspace_by_key(&space.key),
                 source_checkout_path: space.repo_root.clone(),
                 source_repo_root: space.repo_root,
                 repo_key: space.key,
@@ -255,14 +262,21 @@ impl App {
 
         if let Some(cwd) = cwd {
             let path = absolute_user_path(&cwd)?;
-            let space = crate::workspace::git_space_metadata(&path).ok_or_else(|| {
-                ApiFailure::new(
+            let backend = self.state.worktree_backend;
+            let space =
+                crate::worktree::checkout_space_metadata(backend, &path).ok_or_else(|| {
+                    ApiFailure::new(
                     "not_git_worktree",
-                    "Herdr worktree actions require a path inside a Git work tree",
+                    "Herdr worktree actions require a path inside the configured repository type",
                 )
-            })?;
-            let workspace_idx = self.list_source_workspace_idx_for_space(&space);
-            return Ok(worktree_source_from_space(space, workspace_idx, true));
+                })?;
+            let workspace_idx = self.find_parent_workspace_by_key(&space.key);
+            return Ok(worktree_source_from_checkout_space(
+                backend,
+                space,
+                workspace_idx,
+                true,
+            ));
         }
 
         let Some(ws_idx) = self.state.active.or_else(|| {
@@ -294,6 +308,7 @@ impl App {
                 ));
             }
             return Ok(WorktreeSource {
+                backend: self.state.worktree_backend,
                 workspace_idx: Some(ws_idx),
                 source_checkout_path: membership.checkout_path.clone(),
                 source_repo_root: membership.repo_root.clone(),
@@ -302,24 +317,32 @@ impl App {
             });
         }
 
-        let git_space = ws.git_space().cloned().or_else(|| {
-            ws.resolved_identity_cwd_from(&self.state.terminals, &self.terminal_runtimes)
-                .as_deref()
-                .and_then(crate::workspace::git_space_metadata)
-        });
-        let Some(space) = git_space else {
+        let backend = self.state.worktree_backend;
+        let space = ws
+            .resolved_identity_cwd_from(&self.state.terminals, &self.terminal_runtimes)
+            .as_deref()
+            .and_then(|cwd| crate::worktree::checkout_space_metadata(backend, cwd));
+        let Some(space) = space else {
             return Err(ApiFailure::new(
                 "not_git_worktree",
-                "Herdr worktree actions require a workspace inside a Git work tree",
+                match backend {
+                    crate::config::WorktreeBackendConfig::Git => {
+                        "Herdr worktree actions require a workspace inside a Git work tree"
+                    }
+                    crate::config::WorktreeBackendConfig::Jj => {
+                        "Herdr worktree actions require a workspace inside a Jujutsu repository"
+                    }
+                },
             ));
         };
-        if space.is_linked_worktree {
+        if space.is_linked_checkout {
             return Err(ApiFailure::new(
                 "linked_worktree_source",
                 "New and open worktree actions start from the repo parent workspace.",
             ));
         }
         Ok(WorktreeSource {
+            backend,
             workspace_idx: Some(ws_idx),
             source_checkout_path: space.repo_root.clone(),
             source_repo_root: space.repo_root,
@@ -350,6 +373,7 @@ impl App {
                 Some(ws_idx)
             };
             return Ok(WorktreeSource {
+                backend: self.state.worktree_backend,
                 workspace_idx,
                 source_checkout_path,
                 source_repo_root: membership.repo_root.clone(),
@@ -358,23 +382,35 @@ impl App {
             });
         }
 
-        let git_space = ws.git_space().cloned().or_else(|| {
-            ws.resolved_identity_cwd_from(&self.state.terminals, &self.terminal_runtimes)
-                .as_deref()
-                .and_then(crate::workspace::git_space_metadata)
-        });
-        let Some(space) = git_space else {
+        let backend = self.state.worktree_backend;
+        let space = ws
+            .resolved_identity_cwd_from(&self.state.terminals, &self.terminal_runtimes)
+            .as_deref()
+            .and_then(|cwd| crate::worktree::checkout_space_metadata(backend, cwd));
+        let Some(space) = space else {
             return Err(ApiFailure::new(
                 "not_git_worktree",
-                "Herdr worktree actions require a workspace inside a Git work tree",
+                match backend {
+                    crate::config::WorktreeBackendConfig::Git => {
+                        "Herdr worktree actions require a workspace inside a Git work tree"
+                    }
+                    crate::config::WorktreeBackendConfig::Jj => {
+                        "Herdr worktree actions require a workspace inside a Jujutsu repository"
+                    }
+                },
             ));
         };
-        let workspace_idx = if space.is_linked_worktree {
-            self.list_source_workspace_idx_for_space(&space)
+        let workspace_idx = if space.is_linked_checkout {
+            self.find_parent_workspace_by_key(&space.key)
         } else {
             Some(ws_idx)
         };
-        Ok(worktree_source_from_space(space, workspace_idx, true))
+        Ok(worktree_source_from_checkout_space(
+            backend,
+            space,
+            workspace_idx,
+            true,
+        ))
     }
 
     fn ensure_source_parent_membership(
@@ -404,33 +440,29 @@ impl App {
         Ok(created_parent)
     }
 
-    fn find_parent_workspace_for_space(
-        &self,
-        space: &crate::workspace::GitSpaceMetadata,
-    ) -> Option<usize> {
-        self.find_parent_workspace_by_key(&space.key)
-            .or_else(|| self.open_workspace_idx_for_checkout(&space.repo_root))
-    }
-
-    fn list_source_workspace_idx_for_space(
-        &self,
-        space: &crate::workspace::GitSpaceMetadata,
-    ) -> Option<usize> {
-        if space.is_linked_worktree {
-            let parent_checkout = parent_checkout_path_for_space(space);
-            self.open_workspace_idx_for_checkout(&parent_checkout)
-        } else {
-            self.find_parent_workspace_for_space(space)
-        }
-    }
-
     fn find_parent_workspace_by_key(&self, repo_key: &str) -> Option<usize> {
         self.state.workspaces.iter().position(|ws| {
             ws.worktree_space()
                 .is_some_and(|space| space.key == repo_key && !space.is_linked_worktree)
-                || ws
-                    .git_space()
-                    .is_some_and(|space| space.key == repo_key && !space.is_linked_worktree)
+                || match self.state.worktree_backend {
+                    crate::config::WorktreeBackendConfig::Git => ws
+                        .git_space()
+                        .cloned()
+                        .or_else(|| {
+                            ws.resolved_identity_cwd_from(
+                                &self.state.terminals,
+                                &self.terminal_runtimes,
+                            )
+                            .as_deref()
+                            .and_then(crate::workspace::git_space_metadata)
+                        })
+                        .is_some_and(|space| space.key == repo_key && !space.is_linked_worktree),
+                    crate::config::WorktreeBackendConfig::Jj => ws
+                        .resolved_identity_cwd_from(&self.state.terminals, &self.terminal_runtimes)
+                        .as_deref()
+                        .and_then(crate::worktree::jj_space_metadata)
+                        .is_some_and(|space| space.key == repo_key && !space.is_linked_workspace),
+                }
         })
     }
 
@@ -476,8 +508,9 @@ impl App {
         path: Option<String>,
         branch: Option<String>,
     ) -> Result<crate::worktree::ExistingWorktree, ApiFailure> {
-        let entries = crate::worktree::list_existing_worktrees(&source.source_repo_root)
-            .map_err(|err| ApiFailure::new("worktree_list_failed", err))?;
+        let entries =
+            crate::worktree::list_existing_checkouts(source.backend, &source.source_repo_root)
+                .map_err(|err| ApiFailure::new("worktree_list_failed", err))?;
         if let Some(path) = path {
             let expected = absolute_user_path(&path)?;
             let expected = crate::worktree::canonical_or_original(&expected);
@@ -552,7 +585,15 @@ impl App {
         membership: &crate::workspace::WorktreeSpaceMembership,
         open_workspace_id: Option<String>,
     ) -> WorktreeInfo {
-        let branch = crate::workspace::git_branch(&membership.checkout_path);
+        let backend = crate::worktree::checkout_backend_for_path(
+            &membership.repo_root,
+            &membership.checkout_path,
+        );
+        let branch = crate::worktree::checkout_name(
+            backend,
+            &membership.repo_root,
+            &membership.checkout_path,
+        );
         let is_detached = branch.is_none();
         WorktreeInfo {
             path: membership.checkout_path.display().to_string(),
@@ -584,6 +625,18 @@ impl App {
             if git_space
                 .as_ref()
                 .is_some_and(|metadata| metadata.checkout_key == checkout_key)
+            {
+                return true;
+            }
+
+            if ws
+                .resolved_identity_cwd_from(&self.state.terminals, &self.terminal_runtimes)
+                .as_deref()
+                .and_then(crate::worktree::jj_space_metadata)
+                .is_some_and(|metadata| {
+                    crate::worktree::canonical_or_original(&metadata.workspace_root)
+                        == canonical_checkout
+                })
             {
                 return true;
             }
@@ -663,17 +716,19 @@ impl App {
     }
 }
 
-fn worktree_source_from_space(
-    space: crate::workspace::GitSpaceMetadata,
+fn worktree_source_from_checkout_space(
+    backend: crate::config::WorktreeBackendConfig,
+    space: crate::worktree::CheckoutSpaceMetadata,
     workspace_idx: Option<usize>,
     allow_linked: bool,
 ) -> WorktreeSource {
     let source_checkout_path = if allow_linked {
-        parent_checkout_path_for_space(&space)
+        parent_checkout_path_for_checkout_space(backend, &space)
     } else {
         space.repo_root.clone()
     };
     WorktreeSource {
+        backend,
         workspace_idx,
         source_checkout_path: source_checkout_path.clone(),
         source_repo_root: source_checkout_path,
@@ -682,17 +737,20 @@ fn worktree_source_from_space(
     }
 }
 
-fn parent_checkout_path_for_space(space: &crate::workspace::GitSpaceMetadata) -> PathBuf {
-    if !space.is_linked_worktree {
+fn parent_checkout_path_for_checkout_space(
+    backend: crate::config::WorktreeBackendConfig,
+    space: &crate::worktree::CheckoutSpaceMetadata,
+) -> PathBuf {
+    if !space.is_linked_checkout {
         return space.repo_root.clone();
     }
 
-    crate::worktree::list_existing_worktrees(&space.repo_root)
+    crate::worktree::list_existing_checkouts(backend, &space.repo_root)
         .ok()
         .and_then(|entries| {
             entries.into_iter().find_map(|entry| {
-                let entry_space = crate::workspace::git_space_metadata(&entry.path)?;
-                if entry_space.key == space.key && !entry_space.is_linked_worktree {
+                let entry_space = crate::worktree::checkout_space_metadata(backend, &entry.path)?;
+                if entry_space.key == space.key && !entry_space.is_linked_checkout {
                     Some(entry_space.repo_root)
                 } else {
                     None
@@ -965,6 +1023,66 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn api_worktree_create_uses_configured_jj_backend() {
+        if !std::process::Command::new("jj")
+            .arg("--version")
+            .output()
+            .is_ok_and(|output| output.status.success())
+        {
+            return;
+        }
+        let repo = create_committed_repo("api-jj-workspace-create-repo");
+        let init = std::process::Command::new("jj")
+            .args(["git", "init", "--colocate"])
+            .arg(&repo)
+            .status()
+            .unwrap();
+        assert!(init.success());
+        let worktree_root = unique_temp_path("api-jj-workspace-create-root");
+        let mut app = app_with_parent(&repo);
+        app.state.worktree_backend = crate::config::WorktreeBackendConfig::Jj;
+        app.state.worktree_directory = worktree_root.clone();
+        let workspace_id = app.state.workspaces[0].id.clone();
+
+        let response = run_deferred_api_request(
+            &mut app,
+            Request {
+                id: "req".into(),
+                method: crate::api::schema::Method::WorktreeCreate(WorktreeCreateParams {
+                    workspace_id: Some(workspace_id),
+                    branch: Some("api-jj-create".into()),
+                    ..WorktreeCreateParams::default()
+                }),
+            },
+        );
+
+        let success: SuccessResponse = serde_json::from_str(&response).unwrap();
+        let ResponseResult::WorktreeCreated { worktree, .. } = success.result else {
+            panic!("expected worktree_created response");
+        };
+        assert_eq!(worktree.branch.as_deref(), Some("api-jj-create"));
+        let checkout = PathBuf::from(&worktree.path);
+        assert!(checkout.join(".jj").is_dir());
+        assert!(!checkout.join(".git").exists());
+        assert!(crate::worktree::jj_space_metadata(&checkout)
+            .is_some_and(|space| space.is_linked_workspace));
+        assert_eq!(app.state.workspaces.len(), 2);
+
+        for (_, runtime) in app.terminal_runtimes.drain() {
+            runtime.shutdown();
+        }
+        crate::worktree::run_checkout_remove(
+            crate::config::WorktreeBackendConfig::Jj,
+            &repo,
+            &checkout,
+            true,
+        )
+        .unwrap();
+        let _ = std::fs::remove_dir_all(worktree_root);
+        let _ = std::fs::remove_dir_all(repo);
+    }
+
+    #[tokio::test]
     async fn deferred_api_worktree_create_preserves_event_and_plugin_context() {
         let repo = create_committed_repo("api-worktree-create-deferred-repo");
         let worktree_root = unique_temp_path("api-worktree-create-deferred-root");
@@ -1191,6 +1309,7 @@ mod tests {
                 source_repo_root: repo.clone(),
                 repo_key: "repo-key".into(),
                 repo_name: "herdr".into(),
+                backend: crate::config::WorktreeBackendConfig::Git,
                 label: None,
                 focus: false,
                 respond_to,

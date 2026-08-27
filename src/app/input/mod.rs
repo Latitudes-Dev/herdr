@@ -981,6 +981,7 @@ mod tests {
         app.state.name_input = "generated-branch".into();
         app.state.name_input_replace_on_type = true;
         app.state.worktree_create = Some(crate::app::state::WorktreeCreateState {
+            backend: crate::config::WorktreeBackendConfig::Git,
             source_workspace_id: "source".into(),
             source_checkout_path: "/repo/herdr".into(),
             source_existing_membership: None,

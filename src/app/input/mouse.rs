@@ -1050,23 +1050,42 @@ impl AppState {
                         .get(idx)
                         .and_then(|ws| {
                             let group_state = crate::ui::workspace_parent_group_state(self, idx);
-                            let git_space = ws.git_space().cloned().or_else(|| {
-                                ws.resolved_identity_cwd_from(&self.terminals, terminal_runtimes)
+                            let checkout_space = match self.worktree_backend {
+                                crate::config::WorktreeBackendConfig::Git => ws
+                                    .git_space()
+                                    .cloned()
+                                    .or_else(|| {
+                                        ws.resolved_identity_cwd_from(
+                                            &self.terminals,
+                                            terminal_runtimes,
+                                        )
+                                        .as_deref()
+                                        .and_then(crate::workspace::git_space_metadata)
+                                    })
+                                    .map(crate::worktree::checkout_space_from_git),
+                                crate::config::WorktreeBackendConfig::Jj => ws
+                                    .resolved_identity_cwd_from(&self.terminals, terminal_runtimes)
                                     .as_deref()
-                                    .and_then(crate::workspace::git_space_metadata)
-                            });
+                                    .and_then(crate::worktree::jj_space_metadata)
+                                    .map(|space| crate::worktree::CheckoutSpaceMetadata {
+                                        key: space.key,
+                                        repo_name: space.repo_name,
+                                        repo_root: space.workspace_root,
+                                        is_linked_checkout: space.is_linked_workspace,
+                                    }),
+                            };
                             let is_linked_worktree = ws.worktree_space().map_or_else(
                                 || {
-                                    git_space
+                                    checkout_space
                                         .as_ref()
-                                        .is_some_and(|space| space.is_linked_worktree)
+                                        .is_some_and(|space| space.is_linked_checkout)
                                 },
                                 |space| space.is_linked_worktree,
                             );
                             let show_git_menu = ws.worktree_space().is_some()
-                                || git_space
+                                || checkout_space
                                     .as_ref()
-                                    .is_some_and(|space| !space.is_linked_worktree);
+                                    .is_some_and(|space| !space.is_linked_checkout);
                             show_git_menu.then_some(ContextMenuKind::GitWorkspace {
                                 ws_idx: idx,
                                 is_linked_worktree,
