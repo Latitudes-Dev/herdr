@@ -1437,6 +1437,9 @@ impl TerminalState {
     ) -> Option<TerminalStateMutation> {
         let session_ref = session_ref?;
         let known_agent = crate::detect::parse_agent_label(&agent_label);
+        if self.known_agent_label_conflicts_with_detected_agent(&agent_label) {
+            return None;
+        }
         let process_present = known_agent.is_some()
             && self.detected_agent == known_agent
             && self.recent_agent_process_exit.is_none();
@@ -1564,9 +1567,6 @@ impl TerminalState {
         if !unsequenced_selection && !self.accept_hook_report(&source, seq) {
             return None;
         }
-        if self.known_agent_label_conflicts_with_detected_agent(&agent_label) {
-            return None;
-        }
         let session_replacement_allowed = Self::session_report_allows_session_replacement(
             &source,
             &agent_label,
@@ -1664,8 +1664,18 @@ impl TerminalState {
         let Some(detected_agent) = self.detected_agent else {
             return false;
         };
-        crate::detect::parse_agent_label(agent_label)
-            .is_some_and(|hook_agent| hook_agent != detected_agent)
+        let Some(reported_agent) = crate::detect::parse_agent_label(agent_label) else {
+            return false;
+        };
+        if reported_agent != detected_agent {
+            return true;
+        }
+
+        let reported_distribution =
+            crate::detect::distinct_distribution_label(reported_agent, agent_label);
+        self.detected_agent_label
+            .as_deref()
+            .is_some_and(|detected_label| reported_distribution.as_deref() != Some(detected_label))
     }
 
     fn foreground_agent_confirms_different_owner_takeover(
@@ -4437,6 +4447,71 @@ mod tests {
         assert_eq!(terminal.effective_known_agent(), Some(Agent::OpenCode));
         assert_eq!(terminal.effective_agent_label(), Some("shuvcode"));
         assert_eq!(terminal.state, AgentState::Working);
+    }
+
+    #[test]
+    fn shuvcode_process_rejects_opencode_hook_authority() {
+        let mut terminal = test_terminal();
+        let session_ref = crate::agent_resume::AgentSessionRef::id("session").unwrap();
+        terminal.set_detected_agent_process_at(
+            Agent::OpenCode,
+            Some("shuvcode".into()),
+            Instant::now(),
+        );
+        terminal.set_persisted_agent_session(crate::agent_resume::PersistedAgentSession {
+            source: "herdr:opencode".into(),
+            agent: "opencode".into(),
+            session_ref: session_ref.clone(),
+        });
+
+        let mutation = terminal.set_hook_authority_with_session_ref(
+            "herdr:opencode".into(),
+            "opencode".into(),
+            AgentState::Working,
+            None,
+            Some(session_ref),
+            Some(10),
+        );
+
+        assert!(mutation.is_none());
+        assert!(terminal.hook_authority.is_none());
+        assert_eq!(terminal.effective_agent_label(), Some("shuvcode"));
+    }
+
+    #[test]
+    fn process_distribution_controls_session_report_identity() {
+        let mut terminal = test_terminal();
+        terminal.set_detected_agent_process_at(
+            Agent::OpenCode,
+            Some("shuvcode".into()),
+            Instant::now(),
+        );
+
+        let opencode = terminal.set_agent_session_ref_for_session_start(
+            "herdr:opencode".into(),
+            "opencode".into(),
+            crate::agent_resume::AgentSessionRef::id("opencode-session"),
+            None,
+            Some("select".into()),
+        );
+        assert!(opencode.is_none());
+        assert!(terminal.persisted_agent_session.is_none());
+
+        let shuvcode = terminal.set_agent_session_ref_for_session_start(
+            "herdr:shuvcode".into(),
+            "shuvcode".into(),
+            crate::agent_resume::AgentSessionRef::id("shuvcode-session"),
+            None,
+            Some("select".into()),
+        );
+        assert!(shuvcode.is_some());
+        assert_eq!(
+            terminal
+                .persisted_agent_session
+                .as_ref()
+                .map(|session| session.agent.as_str()),
+            Some("shuvcode")
+        );
     }
 
     #[test]
