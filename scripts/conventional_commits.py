@@ -21,17 +21,21 @@ SUBJECT_RE = re.compile(r"^(?P<kind>[a-z]+)(?:\([^)]+\))?!?:\s+\S")
 
 
 def git_subjects(rev_range: str) -> list[str]:
-    output = subprocess.check_output(
-        [
-            "git",
-            "log",
-            "--first-parent",
-            "--no-merges",
-            "--pretty=format:%s",
-            rev_range,
-        ],
-        text=True,
-    ).strip()
+    try:
+        output = subprocess.check_output(
+            [
+                "git",
+                "log",
+                "--first-parent",
+                "--no-merges",
+                "--pretty=format:%s",
+                rev_range,
+            ],
+            text=True,
+        ).strip()
+    except subprocess.CalledProcessError:
+        # Force-pushes can name a `before` SHA that is not in this clone.
+        return []
     return [line.strip() for line in output.splitlines() if line.strip()]
 
 

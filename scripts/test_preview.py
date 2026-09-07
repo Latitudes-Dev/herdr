@@ -188,6 +188,14 @@ class ConventionalCommitTests(unittest.TestCase):
             text=True,
         )
 
+    @mock.patch("scripts.conventional_commits.subprocess.check_output")
+    def test_git_subjects_skips_unreachable_revision_range(self, check_output):
+        check_output.side_effect = subprocess.CalledProcessError(
+            128, ["git", "log"], output="fatal: Invalid revision range\n"
+        )
+
+        self.assertEqual(conventional_commits.git_subjects("missing..after"), [])
+
     def test_valid_subjects_allow_scopes_and_bang(self):
         self.assertTrue(conventional_commits.valid_subject("fix(update): handle preview"))
         self.assertTrue(conventional_commits.valid_subject("feat!: change config"))

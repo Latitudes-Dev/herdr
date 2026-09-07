@@ -669,7 +669,12 @@ test("Pi redelivers state after both socket attempts fail", async () => {
   server = recordingServer;
   await new Promise<void>((resolve, reject) => {
     recordingServer.once("error", reject);
-    recordingServer.listen(recordingSocketPath, resolve);
+    recordingServer.listen(
+      originalPlatform === "win32"
+        ? `\\\\.\\pipe\\${recordingSocketPath}`
+        : recordingSocketPath,
+      resolve,
+    );
   });
 
   configureIntegrationEnvironment(recordingSocketPath);
