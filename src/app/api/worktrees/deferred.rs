@@ -1,5 +1,5 @@
 use std::path::Path;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use crate::api::schema::{
     EventData, EventEnvelope, EventKind, Request, ResponseResult, WorktreeCreateParams,
@@ -73,12 +73,14 @@ impl App {
             }
             return self.find_parent_workspace_by_key(&api.repo_key);
         }
-        let checkout_space = workspace
-            .resolved_identity_cwd_from(&self.state.terminals, &self.terminal_runtimes)
-            .as_deref()
-            .and_then(|cwd| crate::worktree::checkout_space_metadata(api.backend, cwd));
-        if checkout_space.is_some_and(|space| {
-            !space.is_linked_checkout
+        let git_space = workspace.git_space().cloned().or_else(|| {
+            workspace
+                .resolved_identity_cwd_from(&self.state.terminals, &self.terminal_runtimes)
+                .as_deref()
+                .and_then(crate::workspace::git_space_metadata)
+        });
+        if git_space.is_some_and(|space| {
+            !space.is_linked_worktree
                 && space.key == api.repo_key
                 && crate::worktree::canonical_or_original(&space.repo_root)
                     == crate::worktree::canonical_or_original(&api.source_repo_root)
@@ -95,6 +97,7 @@ impl App {
         params: WorktreeCreateParams,
         respond_to: std::sync::mpsc::Sender<String>,
     ) {
+        let backend = self.state.worktree_backend;
         let branch = params
             .branch
             .unwrap_or_else(|| {
@@ -102,15 +105,16 @@ impl App {
                     .duration_since(UNIX_EPOCH)
                     .map(|duration| duration.as_micros().min(u128::from(u64::MAX)) as u64)
                     .unwrap_or(0);
-                crate::worktree::generated_checkout_name(seed, self.state.worktree_backend)
+                crate::worktree::generated_checkout_name(seed, backend)
             })
             .trim()
             .to_string();
         if branch.is_empty() {
-            Self::send_api_response(
-                respond_to,
-                encode_error(id, "invalid_request", "branch is required"),
-            );
+            let message = match backend {
+                crate::config::WorktreeBackendConfig::Git => "branch is required",
+                crate::config::WorktreeBackendConfig::Jj => "workspace name is required",
+            };
+            Self::send_api_response(respond_to, encode_error(id, "invalid_request", message));
             return;
         }
         let base = params.base.unwrap_or_else(|| "HEAD".into());
@@ -178,7 +182,6 @@ impl App {
             source_repo_root: source.source_repo_root,
             repo_key: source.repo_key,
             repo_name: source.repo_name,
-            backend: source.backend,
             label: params.label,
             focus: params.focus,
             respond_to,
@@ -194,11 +197,12 @@ impl App {
             }
             .and_then(|()| {
                 crate::worktree::run_checkout_add_command(
-                    api_request.backend,
+                    backend,
                     &source_checkout_path,
                     &path,
                     &branch,
                     &base,
+                    params.trust_repository,
                 )
             });
             let _ = event_tx.blocking_send(AppEvent::WorktreeAddFinished(Box::new(
@@ -259,7 +263,11 @@ impl App {
         #[cfg(windows)]
         {
             if !params.force
-                && crate::worktree::checkout_has_dirty_files(&space.checkout_path).unwrap_or(false)
+                && crate::worktree::checkout_has_dirty_files(
+                    &space.checkout_path,
+                    params.trust_repository,
+                )
+                .unwrap_or(false)
             {
                 Self::send_api_response(
                     respond_to,
@@ -284,6 +292,14 @@ impl App {
             || self
                 .pending_api_worktree_creates
                 .contains_key(&checkout_key)
+            || self
+                .state
+                .pane_ids_for_workspace(ws_idx)
+                .iter()
+                .any(|pane_id| {
+                    self.pending_worktree_remove_runtime_restores
+                        .contains_key(pane_id)
+                })
         {
             Self::send_api_response(
                 respond_to,
@@ -296,9 +312,12 @@ impl App {
             return;
         }
 
-        if Self::should_shutdown_workspace_terminal_runtimes_for_worktree_remove(params.force) {
-            self.shutdown_workspace_terminal_runtimes_for_worktree_remove(ws_idx);
-        }
+        let shutdown_panes =
+            if Self::should_shutdown_workspace_terminal_runtimes_for_worktree_remove(params.force) {
+                self.shutdown_workspace_terminal_runtimes_for_worktree_remove(ws_idx)
+            } else {
+                Vec::new()
+            };
 
         let operation_id = self.next_api_worktree_operation_id();
         self.pending_api_worktree_removes
@@ -313,14 +332,22 @@ impl App {
             id,
             operation_id,
             checkout_key,
+            shutdown_panes,
             respond_to,
         };
         let repo_root = space.repo_root;
         let path = space.checkout_path;
         let force = params.force;
+        let trust_repository = params.trust_repository;
         let event_tx = self.event_tx.clone();
         std::thread::spawn(move || {
-            let result = crate::worktree::run_checkout_remove(backend, &repo_root, &path, force);
+            let result = crate::worktree::run_checkout_remove(
+                backend,
+                &repo_root,
+                &path,
+                force,
+                trust_repository,
+            );
             let _ = event_tx.blocking_send(AppEvent::WorktreeRemoveFinished(Box::new(
                 crate::events::WorktreeRemoveResult {
                     workspace_id: workspace_internal_id,
@@ -361,12 +388,6 @@ impl App {
         self.pending_api_worktree_creates.remove(&checkout_key);
 
         if let Err(err) = result.result {
-            if let Some(create) = &mut self.state.worktree_create {
-                if create.checkout_path == result.path {
-                    create.creating = false;
-                    create.error = Some(err.clone());
-                }
-            }
             Self::send_api_response(
                 api.respond_to,
                 encode_error(api.id, "worktree_create_failed", err),
@@ -376,7 +397,6 @@ impl App {
 
         let source_workspace_idx = self.api_create_source_workspace_idx(&api);
         let mut source = WorktreeSource {
-            backend: api.backend,
             workspace_idx: source_workspace_idx,
             source_checkout_path: api.source_checkout_path,
             source_repo_root: api.source_repo_root,
@@ -423,17 +443,6 @@ impl App {
                 ws.set_custom_name(label);
             }
         }
-        if self
-            .state
-            .worktree_create
-            .as_ref()
-            .is_some_and(|create| create.checkout_path == result.path)
-        {
-            self.state.worktree_create = None;
-            self.state.name_input.clear();
-            self.state.name_input_replace_on_type = false;
-            self.state.mode = crate::app::Mode::Terminal;
-        }
         self.state.mark_session_dirty();
         if created_workspace {
             self.emit_workspace_open_events(ws_idx);
@@ -470,9 +479,9 @@ impl App {
     pub(crate) fn handle_api_worktree_remove_finished(
         &mut self,
         mut result: crate::events::WorktreeRemoveResult,
-    ) {
+    ) -> Vec<crate::app::actions::PaneStateUpdate> {
         let Some(api) = result.api_request.take() else {
-            return;
+            return Vec::new();
         };
         let operation_matches = self
             .pending_api_worktree_removes
@@ -491,7 +500,7 @@ impl App {
                     "worktree remove completed after the operation was superseded",
                 ),
             );
-            return;
+            return Vec::new();
         }
         self.pending_api_worktree_removes
             .remove(&result.workspace_id);
@@ -499,25 +508,19 @@ impl App {
             .remove(&api.checkout_key);
 
         if let Err(message) = result.result {
+            let pane_updates = self.restore_shutdown_worktree_panes(
+                &api.shutdown_panes,
+                api.operation_id,
+                &result.path,
+            );
             let code =
                 if !result.forced && crate::worktree::is_dirty_worktree_remove_error(&message) {
                     "dirty_worktree_requires_force"
                 } else {
                     "worktree_remove_failed"
                 };
-            if let Some(remove) = &mut self.state.worktree_remove {
-                if remove.workspace_id == result.workspace_id && remove.path == result.path {
-                    remove.removing = false;
-                    if code == "dirty_worktree_requires_force" && !remove.force_confirmation {
-                        remove.force_confirmation = true;
-                        remove.error = None;
-                    } else {
-                        remove.error = Some(message.clone());
-                    }
-                }
-            }
             Self::send_api_response(api.respond_to, encode_error(api.id, code, message));
-            return;
+            return pane_updates;
         }
 
         let mut workspace_id = result.workspace_id.clone();
@@ -559,6 +562,11 @@ impl App {
         } else if let Some(snapshot) = workspace_snapshot.as_ref() {
             workspace_id = snapshot.workspace_id.clone();
         }
+        let pane_updates = self.restore_shutdown_worktree_panes(
+            &api.shutdown_panes,
+            api.operation_id,
+            &result.path,
+        );
 
         let Some(worktree) = worktree else {
             Self::send_api_response(
@@ -569,7 +577,7 @@ impl App {
                     "removed worktree but lost worktree snapshot",
                 ),
             );
-            return;
+            return pane_updates;
         };
         self.emit_worktree_removed_event(
             workspace_id.clone(),
@@ -577,16 +585,6 @@ impl App {
             worktree,
             result.forced,
         );
-        if self.state.worktree_remove.as_ref().is_some_and(|remove| {
-            remove.workspace_id == result.workspace_id && remove.path == result.path
-        }) {
-            self.state.worktree_remove = None;
-            self.state.mode = if self.state.active.is_some() {
-                crate::app::Mode::Terminal
-            } else {
-                crate::app::Mode::Navigate
-            };
-        }
         let response = encode_success(
             api.id,
             ResponseResult::WorktreeRemoved {
@@ -596,5 +594,69 @@ impl App {
             },
         );
         Self::send_api_response(api.respond_to, response);
+        pane_updates
+    }
+
+    fn restore_shutdown_worktree_panes(
+        &mut self,
+        shutdown_panes: &[crate::layout::PaneId],
+        operation_id: u64,
+        removed_checkout: &std::path::Path,
+    ) -> Vec<crate::app::actions::PaneStateUpdate> {
+        let mut pane_updates = Vec::new();
+        let removed_checkout = crate::worktree::canonical_or_original(removed_checkout);
+        for &pane_id in shutdown_panes {
+            let Some((ws_idx, terminal_id)) = self
+                .find_pane(pane_id)
+                .map(|(ws_idx, pane)| (ws_idx, pane.attached_terminal_id.clone()))
+            else {
+                self.pending_worktree_remove_runtime_exits.remove(&pane_id);
+                self.pending_worktree_remove_runtime_restores
+                    .remove(&pane_id);
+                continue;
+            };
+            let runtime_missing = self.terminal_runtimes.get(&terminal_id).is_none();
+            if runtime_missing {
+                let workspace = &self.state.workspaces[ws_idx];
+                let current_checkout = workspace
+                    .worktree_space()
+                    .map(|space| &space.checkout_path)
+                    .unwrap_or(&workspace.identity_cwd);
+                if crate::worktree::canonical_or_original(current_checkout) != removed_checkout {
+                    if let Some(terminal) = self.state.terminals.get_mut(&terminal_id) {
+                        terminal.cwd = current_checkout.clone();
+                    }
+                }
+                if self
+                    .pending_worktree_remove_runtime_exits
+                    .contains_key(&pane_id)
+                {
+                    if self
+                        .pending_worktree_remove_runtime_restores
+                        .insert(pane_id, operation_id)
+                        .is_none()
+                    {
+                        let event_tx = self.event_tx.clone();
+                        tokio::spawn(async move {
+                            tokio::time::sleep(Duration::from_secs(1)).await;
+                            let _ = event_tx
+                                .send(AppEvent::WorktreeRuntimeRestoreFailed {
+                                    pane_id,
+                                    operation_id,
+                                })
+                                .await;
+                        });
+                    }
+                } else {
+                    pane_updates.extend(self.publish_worktree_runtime_agent_release(pane_id));
+                    if !self.respawn_shell_for_launch_pane(pane_id, false) {
+                        self.pending_worktree_remove_runtime_restores
+                            .insert(pane_id, operation_id);
+                        self.queue_worktree_runtime_restore_failed(pane_id, operation_id);
+                    }
+                }
+            }
+        }
+        pane_updates
     }
 }

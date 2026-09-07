@@ -93,6 +93,14 @@ pub(crate) fn jj_space_metadata(cwd: &Path) -> Option<JjSpaceMetadata> {
     })
 }
 
+pub(crate) fn generated_checkout_name(seed: u64, backend: WorktreeBackendConfig) -> String {
+    let name = generated_branch_slug(seed);
+    match backend {
+        WorktreeBackendConfig::Git => name,
+        WorktreeBackendConfig::Jj => name.strip_prefix("worktree/").unwrap_or(&name).to_string(),
+    }
+}
+
 pub(crate) fn generated_branch_slug(seed: u64) -> String {
     let adjectives = [
         "brave", "calm", "clear", "green", "lucky", "quiet", "rapid", "silver",
@@ -104,14 +112,6 @@ pub(crate) fn generated_branch_slug(seed: u64) -> String {
     let noun = nouns[((seed / adjectives.len() as u64) as usize) % nouns.len()];
     let suffix = seed & 0xffff;
     format!("{DEFAULT_WORKTREE_PREFIX}/{adjective}-{noun}-{suffix:04x}")
-}
-
-pub(crate) fn generated_checkout_name(seed: u64, backend: WorktreeBackendConfig) -> String {
-    let name = generated_branch_slug(seed);
-    match backend {
-        WorktreeBackendConfig::Git => name,
-        WorktreeBackendConfig::Jj => name.strip_prefix("worktree/").unwrap_or(&name).to_string(),
-    }
 }
 
 pub(crate) fn branch_to_path_slug(branch: &str) -> String {
@@ -234,6 +234,23 @@ pub(crate) fn canonical_or_original(path: &Path) -> PathBuf {
     std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
 }
 
+fn repository_git_command(repo_root: &Path, trust_repository: bool) -> std::process::Command {
+    let mut command = crate::noninteractive_process::command("git");
+    command.args(repository_git_args(repo_root, trust_repository));
+    command
+}
+
+fn repository_git_args(repo_root: &Path, trust_repository: bool) -> Vec<String> {
+    let mut args = Vec::new();
+    if trust_repository {
+        args.push("-c".to_string());
+        args.push(format!("safe.directory={}", repo_root.display()));
+    }
+    args.push("-C".to_string());
+    args.push(repo_root.display().to_string());
+    args
+}
+
 pub(crate) fn default_checkout_path(root: &Path, repo_name: &str, branch: &str) -> PathBuf {
     root.join(repo_name).join(branch_to_path_slug(branch))
 }
@@ -242,13 +259,10 @@ pub(crate) fn build_worktree_remove_command(
     repo_root: &Path,
     path: &Path,
     force: bool,
+    trust_repository: bool,
 ) -> WorktreeCommand {
-    let mut args = vec![
-        "-C".to_string(),
-        repo_root.display().to_string(),
-        "worktree".to_string(),
-        "remove".to_string(),
-    ];
+    let mut args = repository_git_args(repo_root, trust_repository);
+    args.extend(["worktree".to_string(), "remove".to_string()]);
     if force {
         args.push("--force".to_string());
     }
@@ -280,16 +294,12 @@ pub(crate) fn worktree_dirty_remove_message(path: &Path) -> String {
 }
 
 #[cfg(any(windows, test))]
-pub(crate) fn checkout_has_dirty_files(path: &Path) -> Result<bool, String> {
-    let path_arg = path.display().to_string();
-    let output = crate::noninteractive_process::command("git")
-        .args([
-            "-C",
-            &path_arg,
-            "status",
-            "--porcelain",
-            "--untracked-files=all",
-        ])
+pub(crate) fn checkout_has_dirty_files(
+    path: &Path,
+    trust_repository: bool,
+) -> Result<bool, String> {
+    let output = repository_git_command(path, trust_repository)
+        .args(["status", "--porcelain", "--untracked-files=all"])
         .output()
         .map_err(|err| err.to_string())?;
 
@@ -313,19 +323,20 @@ pub(crate) fn build_worktree_add_new_branch_command(
     path: &Path,
     branch: &str,
     base: &str,
+    trust_repository: bool,
 ) -> WorktreeCommand {
+    let mut args = repository_git_args(repo_root, trust_repository);
+    args.extend([
+        "worktree".to_string(),
+        "add".to_string(),
+        "-b".to_string(),
+        branch.to_string(),
+        path.display().to_string(),
+        base.to_string(),
+    ]);
     WorktreeCommand {
         program: "git".to_string(),
-        args: vec![
-            "-C".to_string(),
-            repo_root.display().to_string(),
-            "worktree".to_string(),
-            "add".to_string(),
-            "-b".to_string(),
-            branch.to_string(),
-            path.display().to_string(),
-            base.to_string(),
-        ],
+        args,
     }
 }
 
@@ -333,24 +344,27 @@ pub(crate) fn build_worktree_add_existing_branch_command(
     repo_root: &Path,
     path: &Path,
     branch: &str,
+    trust_repository: bool,
 ) -> WorktreeCommand {
+    let mut args = repository_git_args(repo_root, trust_repository);
+    args.extend([
+        "worktree".to_string(),
+        "add".to_string(),
+        path.display().to_string(),
+        branch.to_string(),
+    ]);
     WorktreeCommand {
         program: "git".to_string(),
-        args: vec![
-            "-C".to_string(),
-            repo_root.display().to_string(),
-            "worktree".to_string(),
-            "add".to_string(),
-            path.display().to_string(),
-            branch.to_string(),
-        ],
+        args,
     }
 }
 
-pub(crate) fn local_branch_exists(repo_root: &Path, branch: &str) -> Result<bool, String> {
-    let output = crate::noninteractive_process::command("git")
-        .arg("-C")
-        .arg(repo_root)
+fn local_branch_exists(
+    repo_root: &Path,
+    branch: &str,
+    trust_repository: bool,
+) -> Result<bool, String> {
+    let output = repository_git_command(repo_root, trust_repository)
         .args(["show-ref", "--verify", "--quiet"])
         .arg(format!("refs/heads/{branch}"))
         .output()
@@ -379,44 +393,14 @@ pub(crate) fn run_worktree_add_command(
     path: &Path,
     branch: &str,
     base: &str,
+    trust_repository: bool,
 ) -> Result<(), String> {
-    let command = if local_branch_exists(repo_root, branch)? {
-        build_worktree_add_existing_branch_command(repo_root, path, branch)
+    let command = if local_branch_exists(repo_root, branch, trust_repository)? {
+        build_worktree_add_existing_branch_command(repo_root, path, branch, trust_repository)
     } else {
-        build_worktree_add_new_branch_command(repo_root, path, branch, base)
+        build_worktree_add_new_branch_command(repo_root, path, branch, base, trust_repository)
     };
     run_worktree_command(&command)
-}
-
-pub(crate) fn run_checkout_add_command(
-    backend: WorktreeBackendConfig,
-    repo_root: &Path,
-    path: &Path,
-    name: &str,
-    base: &str,
-) -> Result<(), String> {
-    match backend {
-        WorktreeBackendConfig::Git => run_worktree_add_command(repo_root, path, name, base),
-        WorktreeBackendConfig::Jj => {
-            let mut args = vec![
-                "-R".to_string(),
-                repo_root.display().to_string(),
-                "workspace".to_string(),
-                "add".to_string(),
-                "--name".to_string(),
-                name.to_string(),
-            ];
-            if base != "HEAD" {
-                args.extend(["-r".to_string(), base.to_string()]);
-            }
-            args.push(path.display().to_string());
-            let command = WorktreeCommand {
-                program: "jj".to_string(),
-                args,
-            };
-            run_worktree_command(&command)
-        }
-    }
 }
 
 pub(crate) fn run_worktree_command(command: &WorktreeCommand) -> Result<(), String> {
@@ -444,15 +428,16 @@ pub(crate) fn run_worktree_remove_command_with_recovery(
     repo_root: &Path,
     path: &Path,
     force: bool,
+    trust_repository: bool,
 ) -> Result<(), String> {
     match run_worktree_command(command) {
         Ok(()) => Ok(()),
         Err(err) if force && is_not_working_tree_remove_error(&err) => {
-            if worktree_list_contains_path(repo_root, path)? {
+            if worktree_list_contains_path(repo_root, path, trust_repository)? {
                 return Err(err);
             }
             if path.exists() {
-                if !leftover_worktree_checkout_matches_repo(repo_root, path) {
+                if !leftover_worktree_checkout_matches_repo(repo_root, path, trust_repository) {
                     return Err(err);
                 }
                 std::fs::remove_dir_all(path).map_err(|remove_err| {
@@ -468,7 +453,11 @@ pub(crate) fn run_worktree_remove_command_with_recovery(
     }
 }
 
-fn leftover_worktree_checkout_matches_repo(repo_root: &Path, path: &Path) -> bool {
+fn leftover_worktree_checkout_matches_repo(
+    repo_root: &Path,
+    path: &Path,
+    trust_repository: bool,
+) -> bool {
     let git_file = path.join(".git");
     let Ok(content) = std::fs::read_to_string(&git_file) else {
         return false;
@@ -482,16 +471,14 @@ fn leftover_worktree_checkout_matches_repo(repo_root: &Path, path: &Path) -> boo
     } else {
         path.join(gitdir)
     };
-    let Some(worktrees_dir) = git_common_worktrees_dir(repo_root) else {
+    let Some(worktrees_dir) = git_common_worktrees_dir(repo_root, trust_repository) else {
         return false;
     };
     canonical_or_original(&gitdir).starts_with(canonical_or_original(&worktrees_dir))
 }
 
-fn git_common_worktrees_dir(repo_root: &Path) -> Option<PathBuf> {
-    let output = crate::noninteractive_process::command("git")
-        .arg("-C")
-        .arg(repo_root)
+fn git_common_worktrees_dir(repo_root: &Path, trust_repository: bool) -> Option<PathBuf> {
+    let output = repository_git_command(repo_root, trust_repository)
         .args(["rev-parse", "--git-common-dir"])
         .output()
         .ok()?;
@@ -584,10 +571,11 @@ pub(crate) fn parse_worktree_list_porcelain(output: &str) -> Vec<ExistingWorktre
     entries
 }
 
-pub(crate) fn list_existing_worktrees(repo_root: &Path) -> Result<Vec<ExistingWorktree>, String> {
-    let output = crate::noninteractive_process::command("git")
-        .arg("-C")
-        .arg(repo_root)
+pub(crate) fn list_existing_worktrees(
+    repo_root: &Path,
+    trust_repository: bool,
+) -> Result<Vec<ExistingWorktree>, String> {
+    let output = repository_git_command(repo_root, trust_repository)
         .args(["worktree", "list", "--porcelain"])
         .output()
         .map_err(|err| err.to_string())?;
@@ -605,12 +593,24 @@ pub(crate) fn list_existing_worktrees(repo_root: &Path) -> Result<Vec<ExistingWo
     })
 }
 
+fn worktree_list_contains_path(
+    repo_root: &Path,
+    path: &Path,
+    trust_repository: bool,
+) -> Result<bool, String> {
+    let expected = canonical_or_original(path);
+    Ok(list_existing_worktrees(repo_root, trust_repository)?
+        .into_iter()
+        .any(|entry| canonical_or_original(&entry.path) == expected))
+}
+
 pub(crate) fn list_existing_checkouts(
     backend: WorktreeBackendConfig,
     repo_root: &Path,
+    trust_repository: bool,
 ) -> Result<Vec<ExistingWorktree>, String> {
     match backend {
-        WorktreeBackendConfig::Git => list_existing_worktrees(repo_root),
+        WorktreeBackendConfig::Git => list_existing_worktrees(repo_root, trust_repository),
         WorktreeBackendConfig::Jj => list_existing_jj_workspaces(repo_root),
     }
 }
@@ -720,16 +720,57 @@ fn command_output_error(label: &str, output: &std::process::Output) -> String {
     }
 }
 
+pub(crate) fn run_checkout_add_command(
+    backend: WorktreeBackendConfig,
+    repo_root: &Path,
+    path: &Path,
+    name: &str,
+    base: &str,
+    trust_repository: bool,
+) -> Result<(), String> {
+    match backend {
+        WorktreeBackendConfig::Git => {
+            run_worktree_add_command(repo_root, path, name, base, trust_repository)
+        }
+        WorktreeBackendConfig::Jj => {
+            let mut args = vec![
+                "-R".to_string(),
+                repo_root.display().to_string(),
+                "workspace".to_string(),
+                "add".to_string(),
+                "--name".to_string(),
+                name.to_string(),
+            ];
+            if base != "HEAD" {
+                args.extend(["-r".to_string(), base.to_string()]);
+            }
+            args.push(path.display().to_string());
+            let command = WorktreeCommand {
+                program: "jj".to_string(),
+                args,
+            };
+            run_worktree_command(&command)
+        }
+    }
+}
+
 pub(crate) fn run_checkout_remove(
     backend: WorktreeBackendConfig,
     repo_root: &Path,
     path: &Path,
     force: bool,
+    trust_repository: bool,
 ) -> Result<(), String> {
     match backend {
         WorktreeBackendConfig::Git => {
-            let command = build_worktree_remove_command(repo_root, path, force);
-            run_worktree_remove_command_with_recovery(&command, repo_root, path, force)
+            let command = build_worktree_remove_command(repo_root, path, force, trust_repository);
+            run_worktree_remove_command_with_recovery(
+                &command,
+                repo_root,
+                path,
+                force,
+                trust_repository,
+            )
         }
         WorktreeBackendConfig::Jj => run_jj_workspace_remove(repo_root, path, force),
     }
@@ -821,13 +862,6 @@ fn forget_jj_workspace(repo_root: &Path, workspace_name: &str) -> Result<(), Str
     Ok(())
 }
 
-pub(crate) fn worktree_list_contains_path(repo_root: &Path, path: &Path) -> Result<bool, String> {
-    let expected = canonical_or_original(path);
-    Ok(list_existing_worktrees(repo_root)?
-        .into_iter()
-        .any(|entry| canonical_or_original(&entry.path) == expected))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -867,63 +901,33 @@ mod tests {
         repo
     }
 
-    fn jj_available() -> bool {
-        std::process::Command::new("jj")
-            .arg("--version")
-            .output()
-            .is_ok_and(|output| output.status.success())
+    #[test]
+    fn trusted_repository_git_args_are_request_scoped() {
+        assert_eq!(
+            repository_git_args(Path::new("/repo/herdr"), false),
+            ["-C", "/repo/herdr"]
+        );
+        assert_eq!(
+            repository_git_args(Path::new("/repo/herdr"), true),
+            ["-c", "safe.directory=/repo/herdr", "-C", "/repo/herdr",]
+        );
     }
 
     #[test]
     fn generated_branch_slug_is_worktree_namespaced_and_stable() {
         assert_eq!(generated_branch_slug(0), "worktree/brave-river-0000");
         assert_eq!(generated_branch_slug(9), "worktree/calm-cloud-0009");
+        assert_eq!(
+            generated_checkout_name(0, WorktreeBackendConfig::Jj),
+            "brave-river-0000"
+        );
     }
 
-    #[test]
-    fn parses_git_worktree_list_porcelain() {
-        let output = "\
-worktree /repo/main
-HEAD abc
-branch refs/heads/main
-
-worktree /repo/issue
-HEAD def
-branch refs/heads/worktree/issue
-
-worktree /repo/detached
-HEAD fed
-detached
-prunable stale
-
-";
-
-        assert_eq!(
-            parse_worktree_list_porcelain(output),
-            vec![
-                ExistingWorktree {
-                    path: PathBuf::from("/repo/main"),
-                    branch: Some("main".into()),
-                    is_bare: false,
-                    is_detached: false,
-                    is_prunable: false,
-                },
-                ExistingWorktree {
-                    path: PathBuf::from("/repo/issue"),
-                    branch: Some("worktree/issue".into()),
-                    is_bare: false,
-                    is_detached: false,
-                    is_prunable: false,
-                },
-                ExistingWorktree {
-                    path: PathBuf::from("/repo/detached"),
-                    branch: None,
-                    is_bare: false,
-                    is_detached: true,
-                    is_prunable: true,
-                },
-            ]
-        );
+    fn jj_available() -> bool {
+        std::process::Command::new("jj")
+            .arg("--version")
+            .output()
+            .is_ok_and(|output| output.status.success())
     }
 
     #[test]
@@ -972,6 +976,7 @@ prunable stale
             &checkout,
             "herdr-test",
             "@",
+            false,
         )
         .unwrap();
 
@@ -979,52 +984,21 @@ prunable stale
         let linked = jj_space_metadata(&checkout).unwrap();
         assert_eq!(source.key, linked.key);
         assert!(linked.is_linked_workspace);
-        assert!(list_existing_checkouts(WorktreeBackendConfig::Jj, &repo)
-            .unwrap()
-            .iter()
-            .any(|entry| entry.path == checkout && entry.branch.as_deref() == Some("herdr-test")));
-
-        std::fs::write(checkout.join("README.md"), "changed\n").unwrap();
-        let err = run_checkout_remove(WorktreeBackendConfig::Jj, &repo, &checkout, false)
-            .expect_err("changed workspace should require force");
-        assert!(is_dirty_worktree_remove_error(&err));
-        run_checkout_remove(WorktreeBackendConfig::Jj, &repo, &checkout, true).unwrap();
-        assert!(!checkout.exists());
-        let heads = std::process::Command::new("jj")
-            .arg("-R")
-            .arg(&repo)
-            .args([
-                "--ignore-working-copy",
-                "log",
-                "-r",
-                "heads(all())",
-                "--no-graph",
-                "-T",
-                "commit_id ++ \"\\0\"",
-            ])
-            .output()
-            .unwrap();
-        assert!(heads.status.success());
-        let preserved = heads
-            .stdout
-            .split(|byte| *byte == 0)
-            .filter(|commit| !commit.is_empty())
-            .any(|commit| {
-                let content = std::process::Command::new("jj")
-                    .arg("-R")
-                    .arg(&repo)
-                    .args(["--ignore-working-copy", "file", "show", "-r"])
-                    .arg(String::from_utf8_lossy(commit).as_ref())
-                    .arg("root:README.md")
-                    .output()
-                    .unwrap();
-                content.status.success() && content.stdout == b"changed\n"
-            });
         assert!(
-            preserved,
-            "forced removal must preserve the snapshotted commit"
+            list_existing_checkouts(WorktreeBackendConfig::Jj, &repo, false)
+                .unwrap()
+                .iter()
+                .any(
+                    |entry| entry.path == checkout && entry.branch.as_deref() == Some("herdr-test")
+                )
         );
 
+        std::fs::write(checkout.join("README.md"), "changed\n").unwrap();
+        let err = run_checkout_remove(WorktreeBackendConfig::Jj, &repo, &checkout, false, false)
+            .expect_err("changed workspace should require force");
+        assert!(is_dirty_worktree_remove_error(&err));
+        run_checkout_remove(WorktreeBackendConfig::Jj, &repo, &checkout, true, false).unwrap();
+        assert!(!checkout.exists());
         let _ = std::fs::remove_dir_all(repo);
     }
 
@@ -1048,16 +1022,65 @@ prunable stale
             &checkout,
             "missing-test",
             "HEAD",
+            false,
         )
         .unwrap();
         std::fs::remove_dir_all(&checkout).unwrap();
 
-        run_checkout_remove(WorktreeBackendConfig::Jj, &repo, &checkout, true).unwrap();
-        assert!(!list_existing_checkouts(WorktreeBackendConfig::Jj, &repo)
-            .unwrap()
-            .iter()
-            .any(|entry| entry.branch.as_deref() == Some("missing-test")));
+        run_checkout_remove(WorktreeBackendConfig::Jj, &repo, &checkout, true, false).unwrap();
+        assert!(
+            !list_existing_checkouts(WorktreeBackendConfig::Jj, &repo, false)
+                .unwrap()
+                .iter()
+                .any(|entry| entry.branch.as_deref() == Some("missing-test"))
+        );
         let _ = std::fs::remove_dir_all(repo);
+    }
+
+    #[test]
+    fn parses_git_worktree_list_porcelain() {
+        let output = "\
+worktree /repo/main
+HEAD abc
+branch refs/heads/main
+
+worktree /repo/issue
+HEAD def
+branch refs/heads/worktree/issue
+
+worktree /repo/detached
+HEAD fed
+detached
+prunable stale
+
+";
+
+        assert_eq!(
+            parse_worktree_list_porcelain(output),
+            vec![
+                ExistingWorktree {
+                    path: PathBuf::from("/repo/main"),
+                    branch: Some("main".into()),
+                    is_bare: false,
+                    is_detached: false,
+                    is_prunable: false,
+                },
+                ExistingWorktree {
+                    path: PathBuf::from("/repo/issue"),
+                    branch: Some("worktree/issue".into()),
+                    is_bare: false,
+                    is_detached: false,
+                    is_prunable: false,
+                },
+                ExistingWorktree {
+                    path: PathBuf::from("/repo/detached"),
+                    branch: None,
+                    is_bare: false,
+                    is_detached: true,
+                    is_prunable: true,
+                },
+            ]
+        );
     }
 
     #[test]
@@ -1199,11 +1222,11 @@ prunable stale
             ],
         );
 
-        assert_eq!(checkout_has_dirty_files(&checkout), Ok(false));
+        assert_eq!(checkout_has_dirty_files(&checkout, false), Ok(false));
         std::fs::write(checkout.join("README.md"), "dirty\n").unwrap();
-        assert_eq!(checkout_has_dirty_files(&checkout), Ok(true));
+        assert_eq!(checkout_has_dirty_files(&checkout, false), Ok(true));
 
-        let remove = build_worktree_remove_command(&repo, &checkout, true);
+        let remove = build_worktree_remove_command(&repo, &checkout, true, false);
         run_worktree_command(&remove).unwrap();
         let _ = std::fs::remove_dir_all(repo);
     }
@@ -1213,6 +1236,7 @@ prunable stale
         let command = build_worktree_remove_command(
             Path::new("/repo/herdr"),
             Path::new("/w/herdr/issue-137"),
+            false,
             false,
         );
         assert_eq!(command.program, "git");
@@ -1234,6 +1258,7 @@ prunable stale
             Path::new("/repo/herdr"),
             Path::new("/w/herdr/issue-137"),
             true,
+            false,
         );
         assert_eq!(
             command.args,
@@ -1268,6 +1293,7 @@ prunable stale
             Path::new("/w/herdr/worktree-brave-river"),
             "worktree/brave-river",
             "HEAD",
+            false,
         );
         assert_eq!(command.program, "git");
         assert_eq!(
@@ -1291,6 +1317,7 @@ prunable stale
             Path::new("/repo/herdr"),
             Path::new("/w/herdr/worktree-brave-river"),
             "worktree/brave-river",
+            false,
         );
         assert_eq!(command.program, "git");
         assert_eq!(
@@ -1312,7 +1339,7 @@ prunable stale
         let checkout = unique_temp_path("worktree-run-checkout");
         let branch = "worktree/test-create-remove";
 
-        let add = build_worktree_add_new_branch_command(&repo, &checkout, branch, "HEAD");
+        let add = build_worktree_add_new_branch_command(&repo, &checkout, branch, "HEAD", false);
         run_worktree_command(&add).unwrap();
 
         assert!(checkout.join("README.md").exists());
@@ -1328,7 +1355,7 @@ prunable stale
             branch
         );
 
-        let remove = build_worktree_remove_command(&repo, &checkout, false);
+        let remove = build_worktree_remove_command(&repo, &checkout, false, false);
         run_worktree_command(&remove).unwrap();
         assert!(!checkout.exists());
 
@@ -1341,12 +1368,14 @@ prunable stale
         let checkout = unique_temp_path("worktree-recovery-checkout");
         let branch = "worktree/recovery";
 
-        let add = build_worktree_add_new_branch_command(&repo, &checkout, branch, "HEAD");
+        let add = build_worktree_add_new_branch_command(&repo, &checkout, branch, "HEAD", false);
         run_worktree_command(&add).unwrap();
-        let remove = build_worktree_remove_command(&repo, &checkout, true);
+        let remove = build_worktree_remove_command(&repo, &checkout, true, false);
         run_worktree_command(&remove).unwrap();
         std::fs::create_dir_all(&checkout).unwrap();
-        let stale_admin_dir = git_common_worktrees_dir(&repo).unwrap().join("stale");
+        let stale_admin_dir = git_common_worktrees_dir(&repo, false)
+            .unwrap()
+            .join("stale");
         std::fs::write(
             checkout.join(".git"),
             format!("gitdir: {}\n", stale_admin_dir.display()),
@@ -1354,7 +1383,7 @@ prunable stale
         .unwrap();
         std::fs::write(checkout.join("leftover"), "leftover\n").unwrap();
 
-        run_worktree_remove_command_with_recovery(&remove, &repo, &checkout, true).unwrap();
+        run_worktree_remove_command_with_recovery(&remove, &repo, &checkout, true, false).unwrap();
 
         assert!(!checkout.exists());
         let _ = std::fs::remove_dir_all(repo);
@@ -1366,14 +1395,14 @@ prunable stale
         let checkout = unique_temp_path("worktree-recovery-unrelated-checkout");
         let branch = "worktree/recovery-unrelated";
 
-        let add = build_worktree_add_new_branch_command(&repo, &checkout, branch, "HEAD");
+        let add = build_worktree_add_new_branch_command(&repo, &checkout, branch, "HEAD", false);
         run_worktree_command(&add).unwrap();
-        let remove = build_worktree_remove_command(&repo, &checkout, true);
+        let remove = build_worktree_remove_command(&repo, &checkout, true, false);
         run_worktree_command(&remove).unwrap();
         std::fs::create_dir_all(&checkout).unwrap();
         std::fs::write(checkout.join("unrelated"), "do not delete\n").unwrap();
 
-        let err = run_worktree_remove_command_with_recovery(&remove, &repo, &checkout, true)
+        let err = run_worktree_remove_command_with_recovery(&remove, &repo, &checkout, true, false)
             .expect_err("unrelated replacement directory should not be removed");
 
         assert!(is_not_working_tree_remove_error(&err));

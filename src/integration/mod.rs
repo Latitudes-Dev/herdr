@@ -41,7 +41,7 @@ const CLAUDE_HOOK_ASSET: &str = if cfg!(windows) {
 } else {
     include_str!("assets/claude/herdr-agent-state.sh")
 };
-const CLAUDE_INTEGRATION_VERSION: u32 = 8;
+const CLAUDE_INTEGRATION_VERSION: u32 = 9;
 const CODEX_HOOK_INSTALL_NAME: &str = if cfg!(windows) {
     "herdr-agent-state.ps1"
 } else {
@@ -183,7 +183,7 @@ const OPENCODE_V2_PLUGIN_INDEX_ASSET: &str = include_str!("assets/opencode/v2/in
 const OPENCODE_V2_PLUGIN_SOCKET_ASSET: &str = include_str!("assets/opencode/v2/socket.ts");
 const OPENCODE_V2_PLUGIN_STATE_ASSET: &str = include_str!("assets/opencode/v2/state.ts");
 const OPENCODE_V2_PLUGIN_PACKAGE_ASSET: &str = include_str!("assets/opencode/v2/package.json");
-const OPENCODE_INTEGRATION_VERSION: u32 = 10;
+const OPENCODE_INTEGRATION_VERSION: u32 = 11;
 const KILO_PLUGIN_INSTALL_NAME: &str = "herdr-agent-state.js";
 const KILO_PLUGIN_ASSET: &str = include_str!("assets/kilo/herdr-agent-state.js");
 const KILO_INTEGRATION_VERSION: u32 = 4;
@@ -252,7 +252,7 @@ const ANTIGRAVITY_CLI_HOOK_ASSET: &str =
 #[cfg(not(windows))]
 const ANTIGRAVITY_CLI_HOOK_ASSET: &str =
     include_str!("assets/antigravity_cli/herdr-agent-state.sh");
-const ANTIGRAVITY_CLI_INTEGRATION_VERSION: u32 = 2;
+const ANTIGRAVITY_CLI_INTEGRATION_VERSION: u32 = 3;
 /// Antigravity CLI keys `hooks.json` by hook name, so every Herdr entry lives
 /// under one Herdr-owned block that install rewrites and uninstall removes.
 const ANTIGRAVITY_CLI_HOOK_BLOCK_NAME: &str = "herdr";

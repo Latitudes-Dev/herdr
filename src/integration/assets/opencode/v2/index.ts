@@ -2,7 +2,7 @@
 // managed by herdr; reinstalling or updating the integration overwrites this package.
 // add custom plugins beside this package instead of editing it.
 // HERDR_INTEGRATION_ID=opencode
-// HERDR_INTEGRATION_VERSION=10
+// HERDR_INTEGRATION_VERSION=11
 
 import { AgentStateMachine } from "./state.js"
 import { HerdrClient } from "./socket.js"

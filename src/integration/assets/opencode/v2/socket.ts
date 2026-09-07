@@ -1,6 +1,6 @@
 // installed by herdr
 // HERDR_INTEGRATION_ID=opencode
-// HERDR_INTEGRATION_VERSION=10
+// HERDR_INTEGRATION_VERSION=11
 
 import net from "node:net"
 
