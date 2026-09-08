@@ -257,11 +257,11 @@ fn install_target_inner(target: crate::api::schema::IntegrationTarget) -> io::Re
 fn install_opencode_messages() -> io::Result<Vec<String>> {
     let installed = install_opencode()?;
     let mut messages = installed
-        .plugin_paths
+        .removed_v1_plugin_paths
         .iter()
         .map(|path| {
             format!(
-                "installed opencode v1 integration plugin to {}",
+                "removed leftover opencode v1 plugin from {}",
                 path.display()
             )
         })

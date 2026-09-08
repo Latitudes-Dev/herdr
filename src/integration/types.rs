@@ -41,7 +41,7 @@ pub(crate) struct DroidInstallPaths {
 
 #[derive(Debug)]
 pub(crate) struct OpenCodeInstallPaths {
-    pub plugin_paths: Vec<PathBuf>,
+    pub removed_v1_plugin_paths: Vec<PathBuf>,
     pub v2_plugin_dirs: Vec<PathBuf>,
     pub tui_plugin_paths: Vec<PathBuf>,
     pub tui_config_paths: Vec<PathBuf>,

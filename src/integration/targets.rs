@@ -55,12 +55,13 @@ use super::{
     KIMI_HOOK_ASSET, KIMI_HOOK_INSTALL_NAME, MASTRACODE_HOOK_ASSET, MASTRACODE_HOOK_EVENTS,
     MASTRACODE_HOOK_INSTALL_NAME, MASTRACODE_HOOK_TIMEOUT_MS, MASTRACODE_REMOVED_HOOK_EVENTS,
     OMP_EXTENSION_ASSET, OMP_EXTENSION_INSTALL_NAME, OPENCODE_LEGACY_PLUGIN_INSTALL_NAME,
-    OPENCODE_PLUGIN_ASSET, OPENCODE_PLUGIN_INSTALL_NAME, OPENCODE_TUI_PLUGIN_ASSET,
-    OPENCODE_TUI_PLUGIN_INSTALL_NAME, OPENCODE_TUI_PLUGIN_SPEC, OPENCODE_V2_PLUGIN_INDEX_ASSET,
+    OPENCODE_PLUGIN_INSTALL_NAME, OPENCODE_TUI_PLUGIN_ASSET, OPENCODE_TUI_PLUGIN_INSTALL_NAME,
+    OPENCODE_TUI_PLUGIN_SPEC, OPENCODE_V2_PLUGIN_INDEX_ASSET,
     OPENCODE_V2_PLUGIN_INDEX_INSTALL_NAME, OPENCODE_V2_PLUGIN_INSTALL_NAME,
     OPENCODE_V2_PLUGIN_PACKAGE_ASSET, OPENCODE_V2_PLUGIN_PACKAGE_INSTALL_NAME,
     OPENCODE_V2_PLUGIN_SOCKET_ASSET, OPENCODE_V2_PLUGIN_SOCKET_INSTALL_NAME,
-    OPENCODE_V2_PLUGIN_STATE_ASSET, OPENCODE_V2_PLUGIN_STATE_INSTALL_NAME, PI_EXTENSION_ASSET,
+    OPENCODE_V2_PLUGIN_STATE_ASSET, OPENCODE_V2_PLUGIN_STATE_INSTALL_NAME,
+    OPENCODE_V2_PLUGIN_TUI_ASSET, OPENCODE_V2_PLUGIN_TUI_INSTALL_NAME, PI_EXTENSION_ASSET,
     PI_EXTENSION_INSTALL_NAME, QODERCLI_HOOK_ASSET, QODERCLI_HOOK_EVENTS,
     QODERCLI_HOOK_INSTALL_NAME, QODERCLI_REMOVED_LIFECYCLE_HOOK_EVENTS, QWEN_HOOK_ASSET,
     QWEN_HOOK_EVENTS, QWEN_HOOK_INSTALL_NAME,
@@ -477,24 +478,27 @@ pub(crate) fn install_opencode() -> io::Result<OpenCodeInstallPaths> {
         validate_legacy_opencode_plugin(&dir.join("plugins"))?;
     }
 
-    let mut plugin_paths = Vec::new();
+    let mut removed_v1_plugin_paths = Vec::new();
     let mut v2_plugin_dirs = Vec::new();
     let mut tui_plugin_paths = Vec::new();
     let mut tui_config_paths = Vec::new();
     for dir in dirs {
         let plugins_dir = dir.join("plugins");
         fs::create_dir_all(&plugins_dir)?;
-        remove_legacy_opencode_plugin(&plugins_dir, true)?;
-
-        let plugin_path = plugins_dir.join(OPENCODE_PLUGIN_INSTALL_NAME);
-        fs::write(&plugin_path, OPENCODE_PLUGIN_ASSET)?;
-        plugin_paths.push(plugin_path);
+        // OpenCode V2 auto-discovers every `.js`/`.ts` file in `plugins/`. The
+        // V1 named-export module has no default export, so do not write it
+        // there; remove leftovers from previous installs instead.
+        removed_v1_plugin_paths.extend(remove_v1_autodiscovery_plugins(&plugins_dir, true)?);
 
         let v2_dir = plugins_dir.join(OPENCODE_V2_PLUGIN_INSTALL_NAME);
         fs::create_dir_all(&v2_dir)?;
         fs::write(
             v2_dir.join(OPENCODE_V2_PLUGIN_INDEX_INSTALL_NAME),
             OPENCODE_V2_PLUGIN_INDEX_ASSET,
+        )?;
+        fs::write(
+            v2_dir.join(OPENCODE_V2_PLUGIN_TUI_INSTALL_NAME),
+            OPENCODE_V2_PLUGIN_TUI_ASSET,
         )?;
         fs::write(
             v2_dir.join(OPENCODE_V2_PLUGIN_SOCKET_INSTALL_NAME),
@@ -517,11 +521,27 @@ pub(crate) fn install_opencode() -> io::Result<OpenCodeInstallPaths> {
     }
 
     Ok(OpenCodeInstallPaths {
-        plugin_paths,
+        removed_v1_plugin_paths,
         v2_plugin_dirs,
         tui_plugin_paths,
         tui_config_paths,
     })
+}
+
+fn remove_v1_autodiscovery_plugins(
+    plugins_dir: &Path,
+    reject_unmanaged_legacy: bool,
+) -> io::Result<Vec<PathBuf>> {
+    let mut removed = Vec::new();
+    let v1_path = plugins_dir.join(OPENCODE_PLUGIN_INSTALL_NAME);
+    if remove_file_if_exists(&v1_path)? {
+        removed.push(v1_path);
+    }
+    let legacy_path = plugins_dir.join(OPENCODE_LEGACY_PLUGIN_INSTALL_NAME);
+    if remove_legacy_opencode_plugin(plugins_dir, reject_unmanaged_legacy)? {
+        removed.push(legacy_path);
+    }
+    Ok(removed)
 }
 
 fn validate_legacy_opencode_plugin(plugins_dir: &Path) -> io::Result<()> {
@@ -934,17 +954,9 @@ pub(crate) fn uninstall_opencode() -> io::Result<OpenCodeUninstallResult> {
     for dir in opencode_config_dirs()? {
         let plugins_dir = dir.join("plugins");
         let plugin_path = plugins_dir.join(OPENCODE_PLUGIN_INSTALL_NAME);
-        match remove_file_if_exists(&plugin_path) {
-            Ok(true) => removed_plugins.push(plugin_path.clone()),
-            Ok(false) => {}
-            Err(err) => errors.push(format!("failed to remove {}: {err}", plugin_path.display())),
-        }
         plugin_paths.push(plugin_path);
-
-        let legacy_plugin_path = plugins_dir.join(OPENCODE_LEGACY_PLUGIN_INSTALL_NAME);
-        match remove_legacy_opencode_plugin(&plugins_dir, false) {
-            Ok(true) => removed_plugins.push(legacy_plugin_path),
-            Ok(false) => {}
+        match remove_v1_autodiscovery_plugins(&plugins_dir, false) {
+            Ok(removed) => removed_plugins.extend(removed),
             Err(err) => errors.push(err.to_string()),
         }
 

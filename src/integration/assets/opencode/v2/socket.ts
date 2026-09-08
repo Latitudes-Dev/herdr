@@ -1,11 +1,16 @@
 // installed by herdr
 // HERDR_INTEGRATION_ID=opencode
-// HERDR_INTEGRATION_VERSION=11
+// HERDR_INTEGRATION_VERSION=12
 
 import net from "node:net"
 
-const AGENT = isShuvcodeHost() ? "shuvcode" : "opencode"
-const SOURCE = `herdr:${AGENT}`
+function agentName(): string {
+  return isShuvcodeHost() ? "shuvcode" : "opencode"
+}
+
+function sourceName(): string {
+  return `herdr:${agentName()}`
+}
 
 function isShuvcodeHost(): boolean {
   if (/(?:^|[\\/])shuvcode[\\/]plugins[\\/]/i.test(import.meta.url)) return true
@@ -17,10 +22,20 @@ function isShuvcodeHost(): boolean {
   return typeof configDir === "string" && /(?:^|[\\/])shuvcode[\\/]?$/i.test(configDir)
 }
 
-export interface HerdrClientOptions {
+export interface HerdrPane {
   paneID: string
   socketPath: string
+}
+
+export interface HerdrClientOptions extends HerdrPane {
   timeoutMs?: number
+}
+
+export function herdrPane(): HerdrPane | undefined {
+  const paneID = process.env.HERDR_PANE_ID
+  const socketPath = process.env.HERDR_SOCKET_PATH
+  if (process.env.HERDR_ENV !== "1" || !paneID || !socketPath) return undefined
+  return { paneID, socketPath }
 }
 
 export class HerdrClient {
@@ -30,7 +45,7 @@ export class HerdrClient {
 
   constructor(private readonly options: HerdrClientOptions) {}
 
-  reportSession(sessionID: string, source?: "new"): Promise<void> {
+  reportSession(sessionID: string, source?: "new" | "select"): Promise<void> {
     return this.request("pane.report_agent_session", {
       agent_session_id: sessionID,
       ...(source ? { session_start_source: source } : {}),
@@ -52,14 +67,14 @@ export class HerdrClient {
 
   private request(method: string, params: Record<string, unknown>): Promise<void> {
     if (this.stopped) return Promise.resolve()
-    const id = `${SOURCE}:${Date.now()}:${++this.sequence}`
+    const id = `${sourceName()}:${Date.now()}:${++this.sequence}`
     const payload = JSON.stringify({
       id,
       method,
       params: {
         pane_id: this.options.paneID,
-        source: SOURCE,
-        agent: AGENT,
+        source: sourceName(),
+        agent: agentName(),
         seq: this.sequence,
         ...params,
       },

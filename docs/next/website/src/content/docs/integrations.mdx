@@ -227,9 +227,11 @@ Install the OpenCode plugin:
 herdr integration install opencode
 ```
 
-Herdr writes the plugin to every existing OpenCode-compatible config root: `~/.config/opencode` for stock OpenCode and `~/.config/shuvcode` for the ShuvCode fork. At least one config directory must already exist. Uninstall removes only the Herdr plugin files.
+The integration requires OpenCode v2 or a compatible ShuvCode host; v1 plugin support has been removed. Upgrade the host before reinstalling. Herdr writes the package to `plugins/herdr-agent-state/` and the TUI session helper to `herdr-tui-session.js` under every existing config root (`~/.config/opencode` and `~/.config/shuvcode`). At least one config directory must already exist. Reinstall and uninstall remove the old `plugins/herdr-agent-state-v1.js` and any managed `plugins/herdr-agent-state.js`, which conflict with v2 discovery. Uninstall preserves unrelated plugins.
 
-The plugin reports lifecycle state and session identity while either host runs inside a Herdr pane. Stock OpenCode remains identified as `opencode` and resumes with `opencode --session <id>`; the fork is identified as `shuvcode` and resumes with `shuvcode --session <id>`. Both identities share OpenCode's detection behavior and `ui.sidebar.agents.rows_by_agent.opencode` / `ui.sound.agents.open_code` settings. Reinstall integration version `10` or newer to enable the distinct ShuvCode identity. Native screen manifest detection remains available when the plugin is not installed.
+The plugin reports lifecycle state and session identity while either host runs inside a Herdr pane. Stock OpenCode remains identified as `opencode` and resumes with `opencode --session <id>`; the fork is identified as `shuvcode` and resumes with `shuvcode --session <id>`. Both identities share OpenCode's detection behavior and `ui.sidebar.agents.rows_by_agent.opencode` / `ui.sound.agents.open_code` settings. Reinstall integration version `12` or newer for v2 pane reporting. Native screen manifest detection remains available when the plugin is not installed.
+
+OpenCode V2 is a client/server app. When the terminal client runs inside a Herdr pane and talks to a shared background OpenCode or ShuvCode server, lifecycle authority (`working`, `idle`, `blocked`) comes from the TUI/client plugin in that pane, not from process-global server environment variables. The server plugin reports only if that server process itself is running inside a Herdr pane. Do not put `HERDR_PANE_ID` or `HERDR_SOCKET_PATH` on a shared systemd server: one server can serve many panes, and a single pane id would cross-talk. Reinstall integration version `12` or newer for this V2 shared-server path.
 
 ## Kilo Code CLI
 

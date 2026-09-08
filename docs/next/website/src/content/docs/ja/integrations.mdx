@@ -229,9 +229,11 @@ OpenCode プラグインをインストールします:
 herdr integration install opencode
 ```
 
-Herdr は、存在するすべての OpenCode 互換設定ルートにプラグインを書き込みます。標準 OpenCode には `~/.config/opencode`、ShuvCode フォークには `~/.config/shuvcode` を使います。少なくとも 1 つの設定ディレクトリがあらかじめ存在している必要があります。アンインストールは Herdr のプラグインファイルだけを削除します。
+このインテグレーションには OpenCode v2 または互換性のある ShuvCode が必要です。v1 プラグインのサポートは終了したため、再インストール前にホストをアップグレードしてください。Herdr は、存在するすべての設定ルート（`~/.config/opencode` と `~/.config/shuvcode`）の `plugins/herdr-agent-state/` にパッケージを、`herdr-tui-session.js` に TUI セッションヘルパーを書き込みます。少なくとも 1 つの設定ディレクトリがあらかじめ存在している必要があります。再インストールとアンインストールは、v2 のプラグイン検出と競合する古い `plugins/herdr-agent-state-v1.js` と Herdr 管理下の `plugins/herdr-agent-state.js` を削除します。無関係なプラグインは保持されます。
 
-このプラグインは、どちらのホストが Herdr のペイン内で動いている場合も、ライフサイクル状態とセッション識別を報告します。標準 OpenCode は引き続き `opencode` として識別され、`opencode --session <id>` で resume します。フォークは `shuvcode` として識別され、`shuvcode --session <id>` で resume します。両方の識別は OpenCode の検出動作と `ui.sidebar.agents.rows_by_agent.opencode` / `ui.sound.agents.open_code` 設定を共有します。ShuvCode の独立した識別を有効にするには、インテグレーションバージョン `10` 以降を再インストールしてください。プラグインがインストールされていないときは、スクリーンマニフェスト検出が引き続き利用できます。
+このプラグインは、どちらのホストが Herdr のペイン内で動いている場合も、ライフサイクル状態とセッション識別を報告します。標準 OpenCode は引き続き `opencode` として識別され、`opencode --session <id>` で resume します。フォークは `shuvcode` として識別され、`shuvcode --session <id>` で resume します。両方の識別は OpenCode の検出動作と `ui.sidebar.agents.rows_by_agent.opencode` / `ui.sound.agents.open_code` 設定を共有します。v2 のペイン報告には、インテグレーションバージョン `12` 以降を再インストールしてください。プラグインがインストールされていないときは、スクリーンマニフェスト検出が引き続き利用できます。
+
+OpenCode V2 はクライアント/サーバー構成です。ターミナルクライアントが Herdr のペイン内で動き、共有のバックグラウンド OpenCode / ShuvCode サーバーに接続しているとき、ライフサイクルの権威 (`working` / `idle` / `blocked`) はそのペインの TUI/クライアントプラグインから来ます。サーバープロセス全体の環境変数ではありません。サーバープラグインが報告するのは、そのサーバープロセス自身が Herdr のペイン内で動いている場合だけです。共有の systemd サーバーに `HERDR_PANE_ID` や `HERDR_SOCKET_PATH` を置かないでください。1 つのサーバーは複数のペインに仕え、単一のペイン id はクロストークになります。この V2 共有サーバー経路にはインテグレーションバージョン `12` 以降を再インストールしてください。
 
 ## Kilo Code CLI
 

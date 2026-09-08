@@ -1,7 +1,10 @@
 {
   "name": "herdr-agent-state",
-  "version": "10.0.0",
+  "version": "12.0.0",
   "private": true,
   "type": "module",
-  "exports": "./index.ts"
+  "exports": {
+    ".": "./index.ts",
+    "./tui": "./tui.ts"
+  }
 }

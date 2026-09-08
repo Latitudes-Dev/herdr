@@ -508,33 +508,40 @@ pub(crate) fn integration_status_at(
     }
 }
 
+fn opencode_v2_plugin_index(dir: &Path) -> PathBuf {
+    dir.join("plugins")
+        .join(super::OPENCODE_V2_PLUGIN_INSTALL_NAME)
+        .join(super::OPENCODE_V2_PLUGIN_INDEX_INSTALL_NAME)
+}
+
+fn opencode_v1_autodiscovery_paths(dir: &Path) -> [PathBuf; 2] {
+    let plugins = dir.join("plugins");
+    [
+        plugins.join(super::OPENCODE_PLUGIN_INSTALL_NAME),
+        plugins.join(super::OPENCODE_LEGACY_PLUGIN_INSTALL_NAME),
+    ]
+}
+
 fn preferred_opencode_status_path() -> io::Result<PathBuf> {
     let dirs = opencode_config_dirs()?;
     for dir in &dirs {
-        let v1 = dir
-            .join("plugins")
-            .join(super::OPENCODE_PLUGIN_INSTALL_NAME);
-        if v1.is_file() {
-            return Ok(v1);
-        }
-        let v2 = dir
-            .join("plugins")
-            .join(super::OPENCODE_V2_PLUGIN_INSTALL_NAME)
-            .join(super::OPENCODE_V2_PLUGIN_INDEX_INSTALL_NAME);
+        let v2 = opencode_v2_plugin_index(dir);
         if v2.is_file() {
             return Ok(v2);
         }
     }
+    for dir in &dirs {
+        for path in opencode_v1_autodiscovery_paths(dir) {
+            if path.is_file() {
+                return Ok(path);
+            }
+        }
+    }
 
     if let Some(primary) = dirs.into_iter().next() {
-        return Ok(primary
-            .join("plugins")
-            .join(super::OPENCODE_PLUGIN_INSTALL_NAME));
+        return Ok(opencode_v2_plugin_index(&primary));
     }
-    opencode_dir().map(|dir| {
-        dir.join("plugins")
-            .join(super::OPENCODE_PLUGIN_INSTALL_NAME)
-    })
+    opencode_dir().map(|dir| opencode_v2_plugin_index(&dir))
 }
 
 fn opencode_integration_status(path: PathBuf, expected_version: u32) -> super::IntegrationStatus {
@@ -564,19 +571,24 @@ fn opencode_integration_status(path: PathBuf, expected_version: u32) -> super::I
     let mut all_complete = true;
 
     for dir in &existing_dirs {
-        let v1 = dir
-            .join("plugins")
-            .join(super::OPENCODE_PLUGIN_INSTALL_NAME);
-        let v2 = dir
+        let v1_paths = opencode_v1_autodiscovery_paths(dir);
+        let v2 = opencode_v2_plugin_index(dir);
+        let v2_tui = dir
             .join("plugins")
             .join(super::OPENCODE_V2_PLUGIN_INSTALL_NAME)
-            .join(super::OPENCODE_V2_PLUGIN_INDEX_INSTALL_NAME);
+            .join(super::OPENCODE_V2_PLUGIN_TUI_INSTALL_NAME);
         let tui = dir.join(super::OPENCODE_TUI_PLUGIN_INSTALL_NAME);
+        let v1_present = v1_paths.iter().any(|path| path.is_file());
 
-        let v1_version = fs::read_to_string(&v1)
+        let v1_versions = v1_paths.iter().filter_map(|path| {
+            fs::read_to_string(path)
+                .ok()
+                .and_then(|content| parse_integration_version(&content))
+        });
+        let v2_version = fs::read_to_string(&v2)
             .ok()
             .and_then(|content| parse_integration_version(&content));
-        let v2_version = fs::read_to_string(&v2)
+        let v2_tui_version = fs::read_to_string(&v2_tui)
             .ok()
             .and_then(|content| parse_integration_version(&content));
         let tui_version = fs::read_to_string(&tui)
@@ -585,23 +597,29 @@ fn opencode_integration_status(path: PathBuf, expected_version: u32) -> super::I
         let tui_configured =
             super::opencode_config::tui_plugin_is_configured(dir, super::OPENCODE_TUI_PLUGIN_SPEC);
 
-        if v1_version.is_some()
+        if v1_present
             || v2_version.is_some()
             || tui_version.is_some()
-            || v1.is_file()
             || v2.is_file()
+            || v2_tui.is_file()
             || tui.is_file()
         {
             any_install = true;
         }
-        if v1_version.is_none() || v2_version.is_none() || tui_version.is_none() || !tui_configured
+        // A V1-only `.js` file in `plugins/` fails OpenCode V2 auto-discovery.
+        if v1_present
+            || v2_version.is_none()
+            || v2_tui_version.is_none()
+            || tui_version.is_none()
+            || !tui_configured
         {
             all_complete = false;
         }
-        if let Some(version) = v1_version {
+        versions.extend(v1_versions);
+        if let Some(version) = v2_version {
             versions.push(version);
         }
-        if let Some(version) = v2_version {
+        if let Some(version) = v2_tui_version {
             versions.push(version);
         }
         if let Some(version) = tui_version {

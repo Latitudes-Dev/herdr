@@ -89,6 +89,8 @@ integration-assets-test:
     bun test src/integration/assets/herdr-agent-state.test.ts
     bun test src/integration/assets/opencode/herdr-agent-state.test.ts
     bun test src/integration/assets/opencode/herdr-tui-session.test.ts
+    bun test src/integration/assets/opencode/v2/index.test.ts
+    bun test src/integration/assets/opencode/v2/tui.test.ts
 
 # Run plugin marketplace Worker tests
 plugin-marketplace-test:

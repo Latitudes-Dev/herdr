@@ -2,20 +2,14 @@
 // managed by herdr; reinstalling or updating the integration overwrites this package.
 // add custom plugins beside this package instead of editing it.
 // HERDR_INTEGRATION_ID=opencode
-// HERDR_INTEGRATION_VERSION=11
+// HERDR_INTEGRATION_VERSION=12
 
-import { AgentStateMachine } from "./state.js"
-import { HerdrClient } from "./socket.js"
+import { AgentStateMachine, applyLifecycleEvent, eventSessionID, pluginDelays } from "./state.js"
+import { herdrPane, HerdrClient } from "./socket.js"
 
 interface SessionRecord {
   id: string
   parentID?: string
-}
-
-interface EventRecord {
-  id?: string
-  type: string
-  data?: Record<string, unknown>
 }
 
 // OpenCode v2 Plugin.define is identity; export the plugin object directly so
@@ -39,39 +33,19 @@ interface PluginContext {
   }
 }
 
-const sessionID = (event: EventRecord): string | undefined =>
-  typeof event.data?.sessionID === "string" ? event.data.sessionID : undefined
-
-const requestID = (event: EventRecord): string => {
-  const value = event.data?.requestID ?? event.data?.id ?? event.id
-  return typeof value === "string" ? value : `${event.type}:${Date.now()}`
-}
-
 export default {
   id: "herdr-agent-state",
   setup: async (ctx: PluginContext) => {
-    const paneID = process.env.HERDR_PANE_ID
-    const socketPath = process.env.HERDR_SOCKET_PATH
-    if (process.env.HERDR_ENV !== "1" || !paneID || !socketPath) return
+    const pane = herdrPane()
+    if (!pane) return
 
-    const client = new HerdrClient({ paneID, socketPath })
+    const client = new HerdrClient(pane)
     const roots = new Map<string, string>()
     const controller = new AbortController()
-    const idleDelayMs =
-      typeof ctx.options.idleDelayMs === "number" && (ctx.options.idleDelayMs as number) >= 0
-        ? (ctx.options.idleDelayMs as number)
-        : 3_000
-    const envLongRun = Number(process.env.HERDR_LONGRUN_MS)
-    const longRunningDelayMs = Number.isFinite(envLongRun) && envLongRun >= 0
-      ? envLongRun
-      : typeof ctx.options.longRunningDelayMs === "number" &&
-          (ctx.options.longRunningDelayMs as number) >= 0
-        ? (ctx.options.longRunningDelayMs as number)
-        : 120_000
-
+    const delays = pluginDelays(ctx.options)
     const state = new AgentStateMachine({
-      idleDelayMs,
-      longRunningDelayMs,
+      idleDelayMs: delays.idleDelayMs,
+      longRunningDelayMs: delays.longRunningDelayMs,
       report: ({ state: next, sessionID: root }) => client.reportState(next, root),
     })
 
@@ -120,45 +94,13 @@ export default {
     const eventTask = (async () => {
       try {
         for await (const raw of ctx.event.subscribe({ signal: controller.signal })) {
-          const event = raw as EventRecord
-          const id = sessionID(event)
+          const event = raw as { id?: string; type: string; data?: Record<string, unknown> }
+          const id = eventSessionID(event)
           if (!id) continue
 
           if (event.type === "session.updated" || event.type === "session.deleted") roots.delete(id)
           const observed = await observeRoot(id, event.type === "session.created")
-          const op = `${id}:execution`
-          const blocker = `${id}:blocked:${requestID(event)}`
-
-          switch (event.type) {
-            case "session.execution.started":
-            case "session.retry.scheduled":
-              if (observed.isRoot) state.begin(op)
-              break
-            case "session.execution.succeeded":
-            case "session.execution.failed":
-            case "session.execution.interrupted":
-            case "session.error":
-            case "session.idle":
-              if (observed.isRoot) state.end(op)
-              if (event.type === "session.error" || event.type === "session.idle") state.clearSession(id)
-              break
-            case "permission.asked":
-            case "permission.v2.asked":
-            case "question.asked":
-            case "question.v2.asked":
-              state.block(blocker)
-              break
-            case "permission.replied":
-            case "permission.v2.replied":
-            case "question.replied":
-            case "question.rejected":
-            case "question.v2.replied":
-            case "question.v2.rejected": {
-              const reply = event.data?.requestID
-              if (typeof reply === "string") state.unblock(`${id}:blocked:${reply}`)
-              break
-            }
-          }
+          applyLifecycleEvent(state, event, { sessionID: id, isRoot: observed.isRoot })
         }
       } catch (error) {
         if (!controller.signal.aborted && process.env.HERDR_DEBUG === "1") {

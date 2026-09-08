@@ -5092,6 +5092,92 @@ mod tests {
     }
 
     #[test]
+    fn opencode_tui_snapshot_must_follow_sequenced_selection() {
+        for snapshot in [AgentState::Working, AgentState::Blocked] {
+            for snapshot_arrives_first in [true, false] {
+                let mut terminal = test_terminal();
+                let old = crate::agent_resume::AgentSessionRef::id("old-root").unwrap();
+                let selected = crate::agent_resume::AgentSessionRef::id("selected-root").unwrap();
+                anchor_full_lifecycle_session(
+                    &mut terminal,
+                    Agent::OpenCode,
+                    "herdr:opencode",
+                    "opencode",
+                    old,
+                );
+                let report = |terminal: &mut TerminalState, seq| {
+                    terminal.set_hook_authority_with_session_ref(
+                        "herdr:opencode".into(),
+                        "opencode".into(),
+                        snapshot,
+                        None,
+                        Some(selected.clone()),
+                        Some(seq),
+                    )
+                };
+                // An early snapshot is rejected as foreign; a late lower-sequence
+                // snapshot is rejected as stale. Neither socket order can repair it.
+                if snapshot_arrives_first {
+                    assert!(report(&mut terminal, 21).is_none());
+                }
+                terminal
+                    .set_agent_session_ref_for_session_start(
+                        "herdr:opencode".into(),
+                        "opencode".into(),
+                        Some(selected.clone()),
+                        Some(22),
+                        Some("select".into()),
+                    )
+                    .expect("sequenced selection should anchor the selected root");
+                if !snapshot_arrives_first {
+                    assert!(report(&mut terminal, 21).is_none());
+                }
+                report(&mut terminal, 23).expect("fresh snapshot after selection should apply");
+                assert_eq!(terminal.state, snapshot);
+                assert_eq!(
+                    terminal
+                        .hook_authority
+                        .as_ref()
+                        .and_then(|hook| hook.session_ref.as_ref()),
+                    Some(&selected)
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn opencode_tui_ordered_snapshot_survives_delayed_process_detection() {
+        for snapshot in [AgentState::Working, AgentState::Blocked] {
+            let mut terminal = test_terminal();
+            let selected = crate::agent_resume::AgentSessionRef::id("startup-root").unwrap();
+            terminal.set_agent_session_ref_for_session_start(
+                "herdr:opencode".into(),
+                "opencode".into(),
+                Some(selected.clone()),
+                Some(10),
+                Some("select".into()),
+            );
+            terminal.set_hook_authority_with_session_ref(
+                "herdr:opencode".into(),
+                "opencode".into(),
+                snapshot,
+                None,
+                Some(selected.clone()),
+                Some(11),
+            );
+            terminal.set_detected_state(Some(Agent::OpenCode), AgentState::Idle);
+            assert_eq!(terminal.state, snapshot);
+            assert_eq!(
+                terminal
+                    .hook_authority
+                    .as_ref()
+                    .and_then(|hook| hook.session_ref.as_ref()),
+                Some(&selected)
+            );
+        }
+    }
+
+    #[test]
     fn opencode_child_prompt_reports_with_root_id_preserve_lifecycle_authority() {
         let mut terminal = test_terminal();
         let root = crate::agent_resume::AgentSessionRef::id("opencode-root").unwrap();

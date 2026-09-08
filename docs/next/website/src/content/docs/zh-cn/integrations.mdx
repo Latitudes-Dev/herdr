@@ -229,9 +229,11 @@ Herdr 的 Droid 钩子使用 `~/.factory`。Factory 配置目录必须已经存�
 herdr integration install opencode
 ```
 
-Herdr 会把插件写入所有已存在的 OpenCode 兼容配置根目录:标准 OpenCode 使用 `~/.config/opencode`,ShuvCode 分支使用 `~/.config/shuvcode`。必须至少已有一个配置目录。卸载只删除 Herdr 插件文件。
+该集成要求 OpenCode v2 或兼容的 ShuvCode 宿主；v1 插件支持已移除，请先升级宿主再重新安装。Herdr 会在所有已存在的配置根目录（`~/.config/opencode` 和 `~/.config/shuvcode`）中，将插件包写入 `plugins/herdr-agent-state/`，将 TUI 会话辅助插件写入 `herdr-tui-session.js`。必须至少已有一个配置目录。重新安装和卸载会删除与 v2 插件发现机制冲突的旧 `plugins/herdr-agent-state-v1.js`，以及由 Herdr 管理的 `plugins/herdr-agent-state.js`。无关插件会保留。
 
-该插件会在任一宿主运行于 Herdr 窗格内时上报生命周期状态和会话身份。标准 OpenCode 仍识别为 `opencode`,并通过 `opencode --session <id>` 恢复;该分支识别为 `shuvcode`,并通过 `shuvcode --session <id>` 恢复。两种身份共享 OpenCode 的检测行为以及 `ui.sidebar.agents.rows_by_agent.opencode` / `ui.sound.agents.open_code` 设置。请重新安装版本 `10` 或更高版本的集成以启用独立的 ShuvCode 身份。插件未安装时,屏幕清单检测仍然可用。
+该插件会在任一宿主运行于 Herdr 窗格内时上报生命周期状态和会话身份。标准 OpenCode 仍识别为 `opencode`,并通过 `opencode --session <id>` 恢复;该分支识别为 `shuvcode`,并通过 `shuvcode --session <id>` 恢复。两种身份共享 OpenCode 的检测行为以及 `ui.sidebar.agents.rows_by_agent.opencode` / `ui.sound.agents.open_code` 设置。请重新安装版本 `12` 或更高版本的集成以启用 v2 窗格上报。插件未安装时,屏幕清单检测仍然可用。
+
+OpenCode V2 是客户端/服务器架构。当终端客户端在 Herdr 窗格内运行、并连接到共享的后台 OpenCode 或 ShuvCode 服务器时,生命周期权威(`working`、`idle`、`blocked`)来自该窗格中的 TUI/客户端插件,而不是服务器进程的全局环境变量。只有当服务器进程本身也运行在 Herdr 窗格内时,服务器插件才会上报。不要把 `HERDR_PANE_ID` 或 `HERDR_SOCKET_PATH` 放到共享的 systemd 服务器上:一台服务器可以服务多个窗格,单一窗格 id 会造成串扰。请重新安装版本 `12` 或更高版本的集成以启用这条 V2 共享服务器路径。
 
 ## Kilo Code CLI
 

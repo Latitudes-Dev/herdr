@@ -1,6 +1,6 @@
 // installed by herdr
 // HERDR_INTEGRATION_ID=opencode
-// HERDR_INTEGRATION_VERSION=11
+// HERDR_INTEGRATION_VERSION=12
 
 export type AgentState = "working" | "idle" | "blocked"
 
@@ -17,6 +17,12 @@ export interface StateMachineOptions {
   // 0 (or absent) disables the downgrade.
   longRunningDelayMs?: number
   report: (report: StateReport) => void | Promise<void>
+}
+
+export interface AgentEvent {
+  id?: string
+  type: string
+  data?: Record<string, unknown>
 }
 
 export class AgentStateMachine {
@@ -134,4 +140,84 @@ export class AgentStateMachine {
     if (this.idleTimer) clearTimeout(this.idleTimer)
     this.idleTimer = undefined
   }
+}
+
+export function pluginDelays(options: Record<string, unknown>): {
+  idleDelayMs: number
+  longRunningDelayMs: number
+} {
+  const idleDelayMs =
+    typeof options.idleDelayMs === "number" && options.idleDelayMs >= 0 ? options.idleDelayMs : 3_000
+  const envLongRun = Number(process.env.HERDR_LONGRUN_MS)
+  const longRunningDelayMs =
+    Number.isFinite(envLongRun) && envLongRun >= 0
+      ? envLongRun
+      : typeof options.longRunningDelayMs === "number" && options.longRunningDelayMs >= 0
+        ? options.longRunningDelayMs
+        : 120_000
+  return { idleDelayMs, longRunningDelayMs }
+}
+
+export function eventSessionID(event: AgentEvent): string | undefined {
+  if (typeof event.data?.sessionID === "string") return event.data.sessionID
+  const form = event.data?.form
+  if (isRecord(form) && typeof form.sessionID === "string") return form.sessionID
+  return undefined
+}
+
+export function applyLifecycleEvent(
+  state: AgentStateMachine,
+  event: AgentEvent,
+  opts: { sessionID: string; isRoot: boolean },
+): void {
+  const op = `${opts.sessionID}:execution`
+  const blocker = `${opts.sessionID}:blocked:${blockerID(event)}`
+  switch (event.type) {
+    case "session.execution.started":
+    case "session.retry.scheduled":
+      if (opts.isRoot) state.begin(op)
+      return
+    case "session.execution.succeeded":
+    case "session.execution.failed":
+    case "session.execution.interrupted":
+    case "session.error":
+    case "session.idle":
+      if (opts.isRoot) state.end(op)
+      if (event.type === "session.error" || event.type === "session.idle") state.clearSession(opts.sessionID)
+      return
+    case "permission.asked":
+    case "permission.v2.asked":
+    case "question.asked":
+    case "question.v2.asked":
+    case "form.created":
+      state.block(blocker)
+      return
+    case "permission.replied":
+    case "permission.v2.replied":
+    case "question.replied":
+    case "question.rejected":
+    case "question.v2.replied":
+    case "question.v2.rejected":
+    case "form.replied":
+    case "form.cancelled": {
+      const reply = replyID(event)
+      if (reply) state.unblock(`${opts.sessionID}:blocked:${reply}`)
+    }
+  }
+}
+
+function blockerID(event: AgentEvent): string {
+  const form = event.data?.form
+  const value =
+    event.data?.requestID ?? event.data?.id ?? (isRecord(form) ? form.id : undefined) ?? event.id
+  return typeof value === "string" ? value : `${event.type}:${Date.now()}`
+}
+
+function replyID(event: AgentEvent): string | undefined {
+  const value = event.data?.requestID ?? event.data?.id
+  return typeof value === "string" ? value : undefined
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null
 }
