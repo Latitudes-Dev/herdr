@@ -191,6 +191,26 @@ fn clipboard_image_paste_bridge_triggers_on_configured_key_and_empty_paste() {
         Some(ctrl_v)
     ));
     assert!(should_bridge_clipboard_image_paste(
+        b"\x1b[118;5:1u",
+        true,
+        Some(ctrl_v)
+    ));
+    assert!(should_bridge_clipboard_image_paste(
+        b"\x1b[118;5:1;22u",
+        true,
+        Some(ctrl_v)
+    ));
+    assert!(!should_bridge_clipboard_image_paste(
+        b"\x1b[118;5:1;bad:u",
+        true,
+        Some(ctrl_v)
+    ));
+    assert!(!should_bridge_clipboard_image_paste(
+        b"\x1b[118;5:3;22u",
+        true,
+        Some(ctrl_v)
+    ));
+    assert!(should_bridge_clipboard_image_paste(
         b"\x1b[200~\x1b[201~",
         true,
         None
