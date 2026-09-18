@@ -23,13 +23,16 @@ use super::config_file::{check_config_targets, write_config};
 use super::env::{
     antigravity_cli_dir, claude_dir, codex_dir, copilot_dir, cursor_dir, devin_dir, droid_dir,
     grok_dir, hermes_dir, hermes_plugin_dir, kilo_dir, kimi_dir, letta_dir, mastracode_dir,
-    omp_extension_dir, opencode_config_dirs, pi_extension_dir, qodercli_dir, qwen_dir,
-    shuvpi_extension_dir,
+    omp_extension_dir, opencode_compatible_state_dir, opencode_config_dirs, pi_extension_dir,
+    qodercli_dir, qwen_dir, shuvpi_extension_dir,
 };
 use super::file_ops::{
     make_executable, remove_dir_all_if_exists, remove_file_if_exists, remove_legacy_bash_hook_file,
 };
-use super::opencode_config::{add_tui_plugin, remove_tui_plugin, validate_tui_plugin_config};
+use super::opencode_config::{
+    add_cli_plugin, add_tui_plugin, remove_cli_plugin, remove_tui_plugin,
+    validate_tui_plugin_config,
+};
 use super::types::{
     AntigravityCliInstallPaths, AntigravityCliUninstallResult, ClaudeInstallPaths,
     ClaudeUninstallResult, CodexInstallPaths, CodexUninstallResult, CopilotInstallPaths,
@@ -55,15 +58,11 @@ use super::{
     KIMI_HOOK_ASSET, KIMI_HOOK_INSTALL_NAME, LETTA_HOOK_ASSET, LETTA_HOOK_INSTALL_NAME,
     LETTA_HOOK_TIMEOUT_MS, MASTRACODE_HOOK_ASSET, MASTRACODE_HOOK_EVENTS,
     MASTRACODE_HOOK_INSTALL_NAME, MASTRACODE_HOOK_TIMEOUT_MS, MASTRACODE_REMOVED_HOOK_EVENTS,
-    OMP_EXTENSION_ASSET, OMP_EXTENSION_INSTALL_NAME, OPENCODE_LEGACY_PLUGIN_INSTALL_NAME,
-    OPENCODE_PLUGIN_INSTALL_NAME, OPENCODE_TUI_PLUGIN_ASSET, OPENCODE_TUI_PLUGIN_INSTALL_NAME,
-    OPENCODE_TUI_PLUGIN_SPEC, OPENCODE_V2_PLUGIN_INDEX_ASSET,
-    OPENCODE_V2_PLUGIN_INDEX_INSTALL_NAME, OPENCODE_V2_PLUGIN_INSTALL_NAME,
-    OPENCODE_V2_PLUGIN_PACKAGE_ASSET, OPENCODE_V2_PLUGIN_PACKAGE_INSTALL_NAME,
-    OPENCODE_V2_PLUGIN_SOCKET_ASSET, OPENCODE_V2_PLUGIN_SOCKET_INSTALL_NAME,
-    OPENCODE_V2_PLUGIN_STATE_ASSET, OPENCODE_V2_PLUGIN_STATE_INSTALL_NAME,
-    OPENCODE_V2_PLUGIN_TUI_ASSET, OPENCODE_V2_PLUGIN_TUI_INSTALL_NAME, PI_EXTENSION_ASSET,
-    PI_EXTENSION_INSTALL_NAME, QODERCLI_HOOK_ASSET, QODERCLI_HOOK_EVENTS,
+    OMP_EXTENSION_ASSET, OMP_EXTENSION_INSTALL_NAME, OPENCODE_FORK_V1_RENAMED_PLUGIN,
+    OPENCODE_FORK_V2_PACKAGE_DIR, OPENCODE_PLUGIN_ASSET, OPENCODE_PLUGIN_INSTALL_NAME,
+    OPENCODE_TUI_PLUGIN_ASSET, OPENCODE_TUI_PLUGIN_INSTALL_NAME, OPENCODE_TUI_PLUGIN_SPEC,
+    OPENCODE_V2_TUI_PLUGIN_ASSET, OPENCODE_V2_TUI_PLUGIN_DIR, OPENCODE_V2_TUI_PLUGIN_SPEC,
+    PI_EXTENSION_ASSET, PI_EXTENSION_INSTALL_NAME, QODERCLI_HOOK_ASSET, QODERCLI_HOOK_EVENTS,
     QODERCLI_HOOK_INSTALL_NAME, QODERCLI_REMOVED_LIFECYCLE_HOOK_EVENTS, QWEN_HOOK_ASSET,
     QWEN_HOOK_EVENTS, QWEN_HOOK_INSTALL_NAME,
 };
@@ -476,118 +475,57 @@ pub(crate) fn install_opencode() -> io::Result<OpenCodeInstallPaths> {
     let dirs = existing_opencode_config_dirs()?;
     if dirs.is_empty() {
         return Err(io::Error::other(
-            "opencode/shuvcode config directory not found under ~/.config/opencode or ~/.config/shuvcode. install opencode or shuvcode first",
+            "opencode config directory not found under ~/.config/opencode or ~/.config/shuvcode. install opencode or shuvcode first",
         ));
     }
 
+    let mut primary = None;
     for dir in &dirs {
-        check_config_targets(dir, &["tui.jsonc", "tui.json", "cli.json"])?;
-        validate_tui_plugin_config(dir)?;
-        validate_legacy_opencode_plugin(&dir.join("plugins"))?;
+        let installed = install_opencode_into(dir)?;
+        if primary.is_none() {
+            primary = Some(installed);
+        }
     }
-
-    let mut removed_v1_plugin_paths = Vec::new();
-    let mut v2_plugin_dirs = Vec::new();
-    let mut tui_plugin_paths = Vec::new();
-    let mut tui_config_paths = Vec::new();
-    for dir in dirs {
-        let plugins_dir = dir.join("plugins");
-        fs::create_dir_all(&plugins_dir)?;
-        // OpenCode V2 auto-discovers every `.js`/`.ts` file in `plugins/`. The
-        // V1 named-export module has no default export, so do not write it
-        // there; remove leftovers from previous installs instead.
-        removed_v1_plugin_paths.extend(remove_v1_autodiscovery_plugins(&plugins_dir, true)?);
-
-        let v2_dir = plugins_dir.join(OPENCODE_V2_PLUGIN_INSTALL_NAME);
-        fs::create_dir_all(&v2_dir)?;
-        fs::write(
-            v2_dir.join(OPENCODE_V2_PLUGIN_INDEX_INSTALL_NAME),
-            OPENCODE_V2_PLUGIN_INDEX_ASSET,
-        )?;
-        fs::write(
-            v2_dir.join(OPENCODE_V2_PLUGIN_TUI_INSTALL_NAME),
-            OPENCODE_V2_PLUGIN_TUI_ASSET,
-        )?;
-        fs::write(
-            v2_dir.join(OPENCODE_V2_PLUGIN_SOCKET_INSTALL_NAME),
-            OPENCODE_V2_PLUGIN_SOCKET_ASSET,
-        )?;
-        fs::write(
-            v2_dir.join(OPENCODE_V2_PLUGIN_STATE_INSTALL_NAME),
-            OPENCODE_V2_PLUGIN_STATE_ASSET,
-        )?;
-        fs::write(
-            v2_dir.join(OPENCODE_V2_PLUGIN_PACKAGE_INSTALL_NAME),
-            OPENCODE_V2_PLUGIN_PACKAGE_ASSET,
-        )?;
-        v2_plugin_dirs.push(v2_dir);
-
-        let tui_plugin_path = dir.join(OPENCODE_TUI_PLUGIN_INSTALL_NAME);
-        fs::write(&tui_plugin_path, OPENCODE_TUI_PLUGIN_ASSET)?;
-        tui_plugin_paths.push(tui_plugin_path);
-        tui_config_paths.push(add_tui_plugin(&dir, OPENCODE_TUI_PLUGIN_SPEC)?);
-    }
-
-    Ok(OpenCodeInstallPaths {
-        removed_v1_plugin_paths,
-        v2_plugin_dirs,
-        tui_plugin_paths,
-        tui_config_paths,
+    primary.ok_or_else(|| {
+        io::Error::other(
+            "opencode config directory not found under ~/.config/opencode or ~/.config/shuvcode. install opencode or shuvcode first",
+        )
     })
 }
 
-fn remove_v1_autodiscovery_plugins(
-    plugins_dir: &Path,
-    reject_unmanaged_legacy: bool,
-) -> io::Result<Vec<PathBuf>> {
-    let mut removed = Vec::new();
-    let v1_path = plugins_dir.join(OPENCODE_PLUGIN_INSTALL_NAME);
-    if remove_file_if_exists(&v1_path)? {
-        removed.push(v1_path);
-    }
-    let legacy_path = plugins_dir.join(OPENCODE_LEGACY_PLUGIN_INSTALL_NAME);
-    if remove_legacy_opencode_plugin(plugins_dir, reject_unmanaged_legacy)? {
-        removed.push(legacy_path);
-    }
-    Ok(removed)
+fn install_opencode_into(dir: &Path) -> io::Result<OpenCodeInstallPaths> {
+    check_config_targets(dir, &["tui.jsonc", "tui.json", "cli.json"])?;
+    validate_tui_plugin_config(dir)?;
+    let plugins_dir = dir.join("plugins");
+    fs::create_dir_all(&plugins_dir)?;
+    remove_fork_opencode_leftovers(&plugins_dir)?;
+
+    let plugin_path = plugins_dir.join(OPENCODE_PLUGIN_INSTALL_NAME);
+    fs::write(&plugin_path, OPENCODE_PLUGIN_ASSET)?;
+    let tui_plugin_path = dir.join(OPENCODE_TUI_PLUGIN_INSTALL_NAME);
+    fs::write(&tui_plugin_path, OPENCODE_TUI_PLUGIN_ASSET)?;
+    let tui_config_path = add_tui_plugin(dir, OPENCODE_TUI_PLUGIN_SPEC)?;
+    let v2_dir = dir.join(OPENCODE_V2_TUI_PLUGIN_DIR);
+    fs::create_dir_all(&v2_dir)?;
+    fs::write(v2_dir.join("tui.js"), OPENCODE_V2_TUI_PLUGIN_ASSET)?;
+    let cli_config_path = add_cli_plugin(
+        dir,
+        &opencode_compatible_state_dir(dir)?,
+        OPENCODE_V2_TUI_PLUGIN_SPEC,
+    )?;
+
+    Ok(OpenCodeInstallPaths {
+        plugin_path,
+        tui_plugin_path,
+        tui_config_path,
+        cli_config_path,
+    })
 }
 
-fn validate_legacy_opencode_plugin(plugins_dir: &Path) -> io::Result<()> {
-    let path = plugins_dir.join(OPENCODE_LEGACY_PLUGIN_INSTALL_NAME);
-    if !path.is_file() {
-        return Ok(());
-    }
-    let content = fs::read_to_string(&path)?;
-    let integration_id = content.lines().find_map(|line| {
-        line.trim()
-            .trim_start_matches('/')
-            .trim_start_matches('#')
-            .trim()
-            .strip_prefix(super::INTEGRATION_ID_MARKER)
-            .map(str::trim)
-    });
-    if integration_id == Some("opencode") {
-        return Ok(());
-    }
-    Err(io::Error::other(format!(
-        "legacy OpenCode plugin path at {} shadows the Herdr v2 package but is not managed by Herdr; move or remove it before installing",
-        path.display()
-    )))
-}
-
-fn remove_legacy_opencode_plugin(plugins_dir: &Path, reject_unmanaged: bool) -> io::Result<bool> {
-    let path = plugins_dir.join(OPENCODE_LEGACY_PLUGIN_INSTALL_NAME);
-    if !path.is_file() {
-        return Ok(false);
-    }
-    if let Err(err) = validate_legacy_opencode_plugin(plugins_dir) {
-        if reject_unmanaged {
-            return Err(err);
-        }
-        return Ok(false);
-    }
-    fs::remove_file(path)?;
-    Ok(true)
+fn remove_fork_opencode_leftovers(plugins_dir: &Path) -> io::Result<()> {
+    remove_dir_all_if_exists(&plugins_dir.join(OPENCODE_FORK_V2_PACKAGE_DIR))?;
+    remove_file_if_exists(&plugins_dir.join(OPENCODE_FORK_V1_RENAMED_PLUGIN))?;
+    Ok(())
 }
 
 fn existing_opencode_config_dirs() -> io::Result<Vec<PathBuf>> {
@@ -958,70 +896,71 @@ pub(crate) fn uninstall_droid() -> io::Result<DroidUninstallResult> {
 
 pub(crate) fn uninstall_opencode() -> io::Result<OpenCodeUninstallResult> {
     let dirs = opencode_config_dirs()?;
-    for dir in &dirs {
-        check_config_targets(dir, &["tui.jsonc", "tui.json", "cli.json"])?;
-    }
+    let primary = dirs
+        .first()
+        .cloned()
+        .ok_or_else(|| io::Error::other("opencode config directory not found"))?;
 
+    let mut primary_result = None;
     let mut errors = Vec::new();
-    let mut plugin_paths = Vec::new();
-    let mut removed_plugins = Vec::new();
-    let mut v2_plugin_dirs = Vec::new();
-    let mut removed_v2_plugin_dirs = Vec::new();
-    let mut tui_plugin_paths = Vec::new();
-    let mut removed_tui_plugins = Vec::new();
-    let mut tui_config_paths = Vec::new();
-    let mut updated_tui_configs = Vec::new();
-
     for dir in dirs {
-        let plugins_dir = dir.join("plugins");
-        let plugin_path = plugins_dir.join(OPENCODE_PLUGIN_INSTALL_NAME);
-        plugin_paths.push(plugin_path);
-        match remove_v1_autodiscovery_plugins(&plugins_dir, false) {
-            Ok(removed) => removed_plugins.extend(removed),
+        if dir != primary && !dir.is_dir() {
+            continue;
+        }
+        match uninstall_opencode_from(&dir) {
+            Ok(result) if dir == primary => primary_result = Some(result),
+            Ok(_) => {}
             Err(err) => errors.push(err.to_string()),
         }
-
-        let v2_dir = plugins_dir.join(OPENCODE_V2_PLUGIN_INSTALL_NAME);
-        match remove_dir_all_if_exists(&v2_dir) {
-            Ok(true) => removed_v2_plugin_dirs.push(v2_dir.clone()),
-            Ok(false) => {}
-            Err(err) => errors.push(format!("failed to remove {}: {err}", v2_dir.display())),
-        }
-        v2_plugin_dirs.push(v2_dir);
-
-        let tui_plugin_path = dir.join(OPENCODE_TUI_PLUGIN_INSTALL_NAME);
-        match remove_file_if_exists(&tui_plugin_path) {
-            Ok(true) => removed_tui_plugins.push(tui_plugin_path.clone()),
-            Ok(false) => {}
-            Err(err) => errors.push(format!(
-                "failed to remove {}: {err}",
-                tui_plugin_path.display()
-            )),
-        }
-        tui_plugin_paths.push(tui_plugin_path);
-
-        // Upstream registers the TUI plugin in `tui.jsonc` or a pre-existing
-        // `tui.json`; remove the Herdr entry from whichever files carry it.
-        match remove_tui_plugin(&dir, OPENCODE_TUI_PLUGIN_SPEC) {
-            Ok(updated) => updated_tui_configs.extend(updated),
-            Err(err) => errors.push(err.to_string()),
-        }
-        tui_config_paths.push(dir.join("tui.jsonc"));
-        tui_config_paths.push(dir.join("tui.json"));
     }
+    if !errors.is_empty() {
+        return Err(io::Error::other(errors.join("; ")));
+    }
+    primary_result.ok_or_else(|| io::Error::other("opencode config directory not found"))
+}
 
+fn uninstall_opencode_from(dir: &Path) -> io::Result<OpenCodeUninstallResult> {
+    check_config_targets(dir, &["tui.jsonc", "tui.json", "cli.json"])?;
+    let plugin_path = dir.join("plugins").join(OPENCODE_PLUGIN_INSTALL_NAME);
+    let tui_plugin_path = dir.join(OPENCODE_TUI_PLUGIN_INSTALL_NAME);
+    let mut errors = Vec::new();
+    remove_cli_plugin(dir, OPENCODE_V2_TUI_PLUGIN_SPEC).unwrap_or_else(|err| {
+        errors.push(err.to_string());
+        false
+    });
+    let v2_dir = dir.join(OPENCODE_V2_TUI_PLUGIN_DIR);
+    remove_dir_all_if_exists(&v2_dir).unwrap_or_else(|err| {
+        errors.push(format!("failed to remove {}: {err}", v2_dir.display()));
+        false
+    });
+    remove_fork_opencode_leftovers(&dir.join("plugins")).unwrap_or_else(|err| {
+        errors.push(err.to_string());
+    });
+    let updated_tui_configs =
+        remove_tui_plugin(dir, OPENCODE_TUI_PLUGIN_SPEC).unwrap_or_else(|err| {
+            errors.push(err.to_string());
+            Vec::new()
+        });
+    let removed_plugin = remove_file_if_exists(&plugin_path).unwrap_or_else(|err| {
+        errors.push(format!("failed to remove {}: {err}", plugin_path.display()));
+        false
+    });
+    let removed_tui_plugin = remove_file_if_exists(&tui_plugin_path).unwrap_or_else(|err| {
+        errors.push(format!(
+            "failed to remove {}: {err}",
+            tui_plugin_path.display()
+        ));
+        false
+    });
     if !errors.is_empty() {
         return Err(io::Error::other(errors.join("; ")));
     }
 
     Ok(OpenCodeUninstallResult {
-        plugin_paths,
-        removed_plugins,
-        v2_plugin_dirs,
-        removed_v2_plugin_dirs,
-        tui_plugin_paths,
-        removed_tui_plugins,
-        tui_config_paths,
+        plugin_path,
+        tui_plugin_path,
+        removed_plugin,
+        removed_tui_plugin,
         updated_tui_configs,
     })
 }

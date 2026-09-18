@@ -41,10 +41,10 @@ pub(crate) struct DroidInstallPaths {
 
 #[derive(Debug)]
 pub(crate) struct OpenCodeInstallPaths {
-    pub removed_v1_plugin_paths: Vec<PathBuf>,
-    pub v2_plugin_dirs: Vec<PathBuf>,
-    pub tui_plugin_paths: Vec<PathBuf>,
-    pub tui_config_paths: Vec<PathBuf>,
+    pub plugin_path: PathBuf,
+    pub tui_plugin_path: PathBuf,
+    pub tui_config_path: PathBuf,
+    pub cli_config_path: Option<PathBuf>,
 }
 
 #[derive(Debug)]
@@ -257,13 +257,10 @@ pub(crate) struct DroidUninstallResult {
 
 #[derive(Debug)]
 pub(crate) struct OpenCodeUninstallResult {
-    pub plugin_paths: Vec<PathBuf>,
-    pub removed_plugins: Vec<PathBuf>,
-    pub v2_plugin_dirs: Vec<PathBuf>,
-    pub removed_v2_plugin_dirs: Vec<PathBuf>,
-    pub tui_plugin_paths: Vec<PathBuf>,
-    pub removed_tui_plugins: Vec<PathBuf>,
-    pub tui_config_paths: Vec<PathBuf>,
+    pub plugin_path: PathBuf,
+    pub tui_plugin_path: PathBuf,
+    pub removed_plugin: bool,
+    pub removed_tui_plugin: bool,
     pub updated_tui_configs: Vec<PathBuf>,
 }
 

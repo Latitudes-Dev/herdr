@@ -1,5 +1,5 @@
 use std::io;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 #[cfg(test)]
 use std::sync::{Mutex, MutexGuard, OnceLock};
 
@@ -162,6 +162,31 @@ pub(crate) fn opencode_config_dirs() -> io::Result<Vec<PathBuf>> {
     Ok(dirs)
 }
 
+pub(crate) fn opencode_state_dir() -> io::Result<PathBuf> {
+    xdg_state_app("opencode")
+}
+
+/// State directory used for OpenCode's `cli.json` migration check.
+/// ShuvCode mirrors OpenCode's XDG layout under its own app name.
+pub(crate) fn opencode_compatible_state_dir(config_dir: &Path) -> io::Result<PathBuf> {
+    if config_dir
+        .file_name()
+        .is_some_and(|name| name == "shuvcode")
+    {
+        xdg_state_app("shuvcode")
+    } else {
+        opencode_state_dir()
+    }
+}
+
+fn xdg_state_app(app: &str) -> io::Result<PathBuf> {
+    if let Some(value) = std::env::var_os("XDG_STATE_HOME").filter(|value| !value.is_empty()) {
+        return expand_tilde_path(PathBuf::from(value)).map(|path| path.join(app));
+    }
+
+    Ok(home_dir()?.join(".local/state").join(app))
+}
+
 pub(crate) fn kilo_dir() -> io::Result<PathBuf> {
     Ok(home_dir()?.join(".config/kilo"))
 }
@@ -285,5 +310,36 @@ pub(crate) fn integration_env_lock() -> IntegrationEnvLock {
         _guard: guard,
         #[cfg(windows)]
         appdata: std::env::var_os("APPDATA"),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn opencode_state_dir_defaults_to_local_state() {
+        let _lock = integration_env_lock();
+        let original = std::env::var_os("XDG_STATE_HOME");
+        std::env::remove_var("XDG_STATE_HOME");
+        let expected = home_dir().unwrap().join(".local/state/opencode");
+        assert_eq!(opencode_state_dir().unwrap(), expected);
+        match original {
+            Some(value) => std::env::set_var("XDG_STATE_HOME", value),
+            None => std::env::remove_var("XDG_STATE_HOME"),
+        }
+    }
+
+    #[test]
+    fn opencode_state_dir_honors_xdg_state_home() {
+        let _lock = integration_env_lock();
+        let original = std::env::var_os("XDG_STATE_HOME");
+        let xdg = std::env::temp_dir().join("herdr-xdg-state");
+        std::env::set_var("XDG_STATE_HOME", &xdg);
+        assert_eq!(opencode_state_dir().unwrap(), xdg.join("opencode"));
+        match original {
+            Some(value) => std::env::set_var("XDG_STATE_HOME", value),
+            None => std::env::remove_var("XDG_STATE_HOME"),
+        }
     }
 }

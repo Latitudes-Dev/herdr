@@ -235,11 +235,13 @@ Herdr 的 Droid 钩子使用 `~/.factory`。Factory 配置目录必须已经存�
 herdr integration install opencode
 ```
 
-该集成要求 OpenCode v2 或兼容的 ShuvCode 宿主；v1 插件支持已移除，请先升级宿主再重新安装。Herdr 会在所有已存在的配置根目录（`~/.config/opencode` 和 `~/.config/shuvcode`）中，将插件包写入 `plugins/herdr-agent-state/`，将 TUI 会话辅助插件写入 `herdr-tui-session.js`。必须至少已有一个配置目录。重新安装和卸载会删除与 v2 插件发现机制冲突的旧 `plugins/herdr-agent-state-v1.js`，以及由 Herdr 管理的 `plugins/herdr-agent-state.js`。无关插件会保留。
+该集成支持 OpenCode V1 `1.18.29` 及更高版本、OpenCode V2（已在 beta `19242` 验证），以及 ShuvCode 宿主。必须至少已有一个配置目录。Herdr 会在所有已存在的配置根目录（`~/.config/opencode` 和 `~/.config/shuvcode`）写入同一套文件：服务器入口 `plugins/herdr-agent-state.js`、共享 TUI 插件 `herdr-tui-session.js`，以及 V2 TUI 入口 `herdr-opencode/tui.js`。
 
-该插件会在任一宿主运行于 Herdr 窗格内时上报生命周期状态和会话身份。标准 OpenCode 仍识别为 `opencode`,并通过 `opencode --session <id>` 恢复;该分支识别为 `shuvcode`,并通过 `shuvcode --session <id>` 恢复。两种身份共享 OpenCode 的检测行为以及 `ui.sidebar.agents.rows_by_agent.opencode` / `ui.sound.agents.open_code` 设置。请重新安装版本 `12` 或更高版本的集成以启用 v2 窗格上报。插件未安装时,屏幕清单检测仍然可用。
+安装会把 V1 TUI 插件登记到 `tui.jsonc`，把 V2 TUI 插件登记到 `cli.json`，并保留其他偏好和插件。若 `tui.json` 里已有 V1 登记，则视为已安装，不再创建 `tui.jsonc`。卸载只从这两个 TUI 配置文件中移除 Herdr 登记，文件及其他偏好会保留。如果宿主仍有待导入的 V1 TUI 偏好（`tui.json` 或 `kv.json`），Herdr 会推迟写入 `cli.json`，以便首次启动迁移能够运行；请先启动一次 V2 客户端，再重新安装该集成。否则 Herdr 会创建 `cli.json` 并写入插件登记。安装后请重启 TUI。卸载会删除受管插件文件及其配置条目。重新安装还会删除旧的 fork 插件包 `plugins/herdr-agent-state/`，以免与上游形状的插件一并加载。
 
-OpenCode V2 是客户端/服务器架构。当终端客户端在 Herdr 窗格内运行、并连接到共享的后台 OpenCode 或 ShuvCode 服务器时,生命周期权威(`working`、`idle`、`blocked`)来自该窗格中的 TUI/客户端插件,而不是服务器进程的全局环境变量。只有当服务器进程本身也运行在 Herdr 窗格内时,服务器插件才会上报。不要把 `HERDR_PANE_ID` 或 `HERDR_SOCKET_PATH` 放到共享的 systemd 服务器上:一台服务器可以服务多个窗格,单一窗格 id 会造成串扰。请重新安装版本 `12` 或更高版本的集成以启用这条 V2 共享服务器路径。
+V2 生命周期上报运行在窗格本地 TUI 中，即使多个窗格共享同一服务器，也会关联到当前选中的根会话。完成和中断会清除 working；未处理的 permission、表单以及失败的执行会保持 blocked。V2 Mini 和无头客户端不运行 TUI 插件，因此不会提供这种生命周期上报。
+
+该插件会在任一宿主运行于 Herdr 窗格内时上报生命周期状态和会话身份。标准 OpenCode 仍识别为 `opencode`，并通过 `opencode --session <id>` 恢复；ShuvCode 识别为 `shuvcode`，并通过 `shuvcode --session <id>` 恢复。两种身份共享 OpenCode 的检测行为以及 `ui.sidebar.agents.rows_by_agent.opencode` / `ui.sound.agents.open_code` 设置。插件未安装时，屏幕清单检测仍然可用。
 
 ## Kilo Code CLI
 

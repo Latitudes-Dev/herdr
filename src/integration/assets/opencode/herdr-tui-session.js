@@ -2,7 +2,7 @@
 // managed by herdr; reinstalling or updating the integration overwrites this file.
 // HERDR_INTEGRATION_ID=opencode-tui
 // HERDR_INTEGRATION_VERSION=12
-// V2 shared-server lifecycle reporting lives in plugins/herdr-agent-state/tui.ts.
+// V2 TUI entrypoint herdr-opencode/tui.js re-exports this file.
 
 import net from "node:net";
 

@@ -182,24 +182,17 @@ const DROID_REMOVED_LIFECYCLE_HOOK_EVENTS: [(&str, &str); 9] = [
 // Previous V1 auto-discovery filename. OpenCode V2 loads every `.js` file in
 // `plugins/`, and the V1 asset has no `export default { id, setup|effect }`, so
 // install no longer writes it. Keep the name to remove leftovers.
-const OPENCODE_PLUGIN_INSTALL_NAME: &str = "herdr-agent-state-v1.js";
-const OPENCODE_LEGACY_PLUGIN_INSTALL_NAME: &str = "herdr-agent-state.js";
-#[cfg(test)]
+const OPENCODE_PLUGIN_INSTALL_NAME: &str = "herdr-agent-state.js";
 const OPENCODE_PLUGIN_ASSET: &str = include_str!("assets/opencode/herdr-agent-state.js");
 const OPENCODE_TUI_PLUGIN_INSTALL_NAME: &str = "herdr-tui-session.js";
 const OPENCODE_TUI_PLUGIN_SPEC: &str = "./herdr-tui-session.js";
 const OPENCODE_TUI_PLUGIN_ASSET: &str = include_str!("assets/opencode/herdr-tui-session.js");
-const OPENCODE_V2_PLUGIN_INSTALL_NAME: &str = "herdr-agent-state";
-const OPENCODE_V2_PLUGIN_INDEX_INSTALL_NAME: &str = "index.ts";
-const OPENCODE_V2_PLUGIN_TUI_INSTALL_NAME: &str = "tui.ts";
-const OPENCODE_V2_PLUGIN_SOCKET_INSTALL_NAME: &str = "socket.ts";
-const OPENCODE_V2_PLUGIN_STATE_INSTALL_NAME: &str = "state.ts";
-const OPENCODE_V2_PLUGIN_PACKAGE_INSTALL_NAME: &str = "package.json";
-const OPENCODE_V2_PLUGIN_INDEX_ASSET: &str = include_str!("assets/opencode/v2/index.ts");
-const OPENCODE_V2_PLUGIN_TUI_ASSET: &str = include_str!("assets/opencode/v2/tui.ts");
-const OPENCODE_V2_PLUGIN_SOCKET_ASSET: &str = include_str!("assets/opencode/v2/socket.ts");
-const OPENCODE_V2_PLUGIN_STATE_ASSET: &str = include_str!("assets/opencode/v2/state.ts");
-const OPENCODE_V2_PLUGIN_PACKAGE_ASSET: &str = include_str!("assets/opencode/v2/package.json");
+const OPENCODE_V2_TUI_PLUGIN_DIR: &str = "herdr-opencode";
+const OPENCODE_V2_TUI_PLUGIN_SPEC: &str = "./herdr-opencode";
+const OPENCODE_V2_TUI_PLUGIN_ASSET: &str = include_str!("assets/opencode/tui.js");
+/// Directory left by the fork's pre-upstream OpenCode v2 package layout.
+const OPENCODE_FORK_V2_PACKAGE_DIR: &str = "herdr-agent-state";
+const OPENCODE_FORK_V1_RENAMED_PLUGIN: &str = "herdr-agent-state-v1.js";
 const OPENCODE_INTEGRATION_VERSION: u32 = 12;
 const KILO_PLUGIN_INSTALL_NAME: &str = "herdr-agent-state.js";
 const KILO_PLUGIN_ASSET: &str = include_str!("assets/kilo/herdr-agent-state.js");

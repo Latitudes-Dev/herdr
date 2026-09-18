@@ -2526,49 +2526,38 @@ fn install_opencode_writes_server_and_tui_plugins() {
     let opencode_dir = home.join(".config/opencode");
     fs::create_dir_all(&opencode_dir).unwrap();
     std::env::set_var("HOME", &home);
-    std::env::remove_var("OPENCODE_CONFIG_DIR");
 
     let installed = install_opencode().unwrap();
 
-    assert!(installed.removed_v1_plugin_paths.is_empty());
-    assert!(!opencode_dir
-        .join("plugins")
-        .join(OPENCODE_PLUGIN_INSTALL_NAME)
-        .exists());
-    assert!(!opencode_dir
-        .join("plugins")
-        .join(OPENCODE_LEGACY_PLUGIN_INSTALL_NAME)
-        .exists());
     assert_eq!(
-        installed.v2_plugin_dirs[0],
+        installed.plugin_path,
         opencode_dir
             .join("plugins")
-            .join(OPENCODE_V2_PLUGIN_INSTALL_NAME)
+            .join(OPENCODE_PLUGIN_INSTALL_NAME)
     );
-    assert!(installed.v2_plugin_dirs[0]
-        .join(OPENCODE_V2_PLUGIN_INDEX_INSTALL_NAME)
-        .is_file());
-    assert!(installed.v2_plugin_dirs[0]
-        .join(OPENCODE_V2_PLUGIN_TUI_INSTALL_NAME)
-        .is_file());
     assert_eq!(
-        installed.tui_plugin_paths[0],
+        fs::read_to_string(&installed.plugin_path).unwrap(),
+        OPENCODE_PLUGIN_ASSET
+    );
+    assert_eq!(
+        installed.tui_plugin_path,
         opencode_dir.join(OPENCODE_TUI_PLUGIN_INSTALL_NAME)
     );
     assert_eq!(
-        fs::read_to_string(&installed.tui_plugin_paths[0]).unwrap(),
+        fs::read_to_string(&installed.tui_plugin_path).unwrap(),
         OPENCODE_TUI_PLUGIN_ASSET
     );
-    assert_eq!(
-        installed.tui_config_paths[0],
-        opencode_dir.join("tui.jsonc")
-    );
+    assert_eq!(installed.tui_config_path, opencode_dir.join("tui.jsonc"));
     let tui_config: Value =
-        serde_json::from_str(&fs::read_to_string(&installed.tui_config_paths[0]).unwrap()).unwrap();
+        serde_json::from_str(&fs::read_to_string(&installed.tui_config_path).unwrap()).unwrap();
     assert_eq!(tui_config["plugin"], json!([OPENCODE_TUI_PLUGIN_SPEC]));
-    // The v2 package is auto-discovered from `plugins/`; Herdr never registers
-    // anything in `cli.json`.
-    assert!(!opencode_dir.join("cli.json").exists());
+    let cli_config_path = installed
+        .cli_config_path
+        .expect("cli.json should be created when OpenCode has nothing to migrate");
+    assert_eq!(cli_config_path, opencode_dir.join("cli.json"));
+    let cli_config: Value =
+        serde_json::from_str(&fs::read_to_string(&cli_config_path).unwrap()).unwrap();
+    assert_eq!(cli_config["plugins"], json!([OPENCODE_V2_TUI_PLUGIN_SPEC]));
 
     std::env::remove_var("HOME");
     let _ = fs::remove_dir_all(base);
@@ -2592,14 +2581,14 @@ fn opencode_reuses_json_registration_in_symlinked_config_directory() {
 
     for _ in 0..2 {
         let installed = install_opencode().unwrap();
-        assert_eq!(installed.tui_config_paths, vec![json_path.clone()]);
-        assert!(!dir.join("cli.json").exists());
+        assert_eq!(installed.tui_config_path, json_path);
+        assert!(installed.cli_config_path.is_none());
         assert!(!dir.join("tui.jsonc").exists());
         assert_eq!(fs::read_to_string(&json_path).unwrap(), original);
         assert_eq!(
             integration_status_at(
                 crate::api::schema::IntegrationTarget::Opencode,
-                installed.v2_plugin_dirs[0].join(OPENCODE_V2_PLUGIN_INDEX_INSTALL_NAME),
+                installed.plugin_path,
                 OPENCODE_INTEGRATION_VERSION,
             )
             .state,
@@ -2614,10 +2603,7 @@ fn opencode_reuses_json_registration_in_symlinked_config_directory() {
         r#"{"plugin":["./herdr-tui-session.js","another"]}"#,
     )
     .unwrap();
-    assert_eq!(
-        install_opencode().unwrap().tui_config_paths,
-        vec![jsonc_path.clone()]
-    );
+    assert_eq!(install_opencode().unwrap().tui_config_path, jsonc_path);
     let result = uninstall_opencode().unwrap();
     assert_eq!(
         result.updated_tui_configs,
@@ -2634,14 +2620,14 @@ fn opencode_reuses_json_registration_in_symlinked_config_directory() {
     );
     assert!(uninstall_opencode().unwrap().updated_tui_configs.is_empty());
     assert_eq!(fs::read_link(&dir).unwrap(), dotfiles);
-    assert!(!result.v2_plugin_dirs[0].exists());
-    assert!(!result.tui_plugin_paths[0].exists());
+    assert!(!result.plugin_path.exists());
+    assert!(!result.tui_plugin_path.exists());
     std::env::remove_var("HOME");
     fs::remove_dir_all(base).unwrap();
 }
 
 #[test]
-fn opencode_install_writes_v2_package_without_cli_registration_while_tui_json_present() {
+fn opencode_install_defers_v2_registration_while_migration_pending() {
     let _lock = integration_env_lock();
     let base = unique_base();
     let home = base.join("home");
@@ -2649,63 +2635,56 @@ fn opencode_install_writes_v2_package_without_cli_registration_while_tui_json_pr
     fs::create_dir_all(&opencode_dir).unwrap();
     fs::write(opencode_dir.join("tui.json"), "{}").unwrap();
     std::env::set_var("HOME", &home);
-    std::env::remove_var("OPENCODE_CONFIG_DIR");
 
     let installed = install_opencode().unwrap();
 
-    // The v2 package is auto-discovered from `plugins/`, so Herdr never touches
-    // `cli.json` and does not need to wait for OpenCode's preference migration.
+    assert!(installed.cli_config_path.is_none());
     assert!(!opencode_dir.join("cli.json").exists());
-    assert!(installed.v2_plugin_dirs[0]
-        .join(OPENCODE_V2_PLUGIN_TUI_INSTALL_NAME)
+    assert!(opencode_dir
+        .join(OPENCODE_V2_TUI_PLUGIN_DIR)
+        .join("tui.js")
         .is_file());
-    // An existing `tui.json` without a Herdr entry is left for OpenCode to
-    // migrate; the TUI plugin registration goes into the managed `tui.jsonc`.
-    assert_eq!(
-        installed.tui_config_paths,
-        vec![opencode_dir.join("tui.jsonc")]
-    );
-    assert_eq!(
-        fs::read_to_string(opencode_dir.join("tui.json")).unwrap(),
-        "{}"
-    );
 
     std::env::remove_var("HOME");
     let _ = fs::remove_dir_all(base);
 }
 
 #[test]
-fn opencode_install_status_and_uninstall_preserve_cli_preferences() {
+fn opencode_v2_install_status_and_uninstall_preserve_cli_preferences() {
     let _lock = integration_env_lock();
     let base = unique_base();
     let home = base.join("home");
     let dir = home.join(".config/opencode");
     fs::create_dir_all(&dir).unwrap();
     std::env::set_var("HOME", &home);
-    std::env::remove_var("OPENCODE_CONFIG_DIR");
     let cli = dir.join("cli.json");
-    let original = r#"{"theme":{"name":"catppuccin"},"plugins":["other"]}"#;
-    fs::write(&cli, original).unwrap();
+    fs::write(
+        &cli,
+        r#"{"theme":{"name":"catppuccin"},"plugins":["other"]}"#,
+    )
+    .unwrap();
     let installed = install_opencode().unwrap();
+    assert_eq!(installed.cli_config_path, Some(cli.clone()));
     let status = || {
         integration_status_at(
             crate::api::schema::IntegrationTarget::Opencode,
-            installed.v2_plugin_dirs[0].join(OPENCODE_V2_PLUGIN_INDEX_INSTALL_NAME),
+            installed.plugin_path.clone(),
             OPENCODE_INTEGRATION_VERSION,
         )
         .state
     };
     assert_eq!(status(), IntegrationStatusKind::Current);
-    assert_eq!(fs::read_to_string(&cli).unwrap(), original);
-    let entry = installed.v2_plugin_dirs[0].join(OPENCODE_V2_PLUGIN_TUI_INSTALL_NAME);
+    let entry = dir.join(OPENCODE_V2_TUI_PLUGIN_DIR).join("tui.js");
     assert_eq!(
         fs::read_to_string(&entry).unwrap(),
-        OPENCODE_V2_PLUGIN_TUI_ASSET
+        OPENCODE_V2_TUI_PLUGIN_ASSET
     );
     fs::remove_file(&entry).unwrap();
     assert_eq!(status(), IntegrationStatusKind::Outdated);
     install_opencode().unwrap();
-    assert_eq!(status(), IntegrationStatusKind::Current);
+    super::opencode_config::remove_cli_plugin(&dir, OPENCODE_V2_TUI_PLUGIN_SPEC).unwrap();
+    assert_eq!(status(), IntegrationStatusKind::Outdated);
+    install_opencode().unwrap();
     uninstall_opencode().unwrap();
     assert!(!entry.exists());
     assert_eq!(
@@ -2743,10 +2722,7 @@ fn opencode_hard_link_rejection_precedes_install_and_uninstall_asset_changes() {
     assert_eq!(fs::read_to_string(&alias).unwrap(), original);
     assert_eq!(crate::platform::config_file_link_count(&config).unwrap(), 2);
     assert!(!dir.join("tui.jsonc").exists());
-    assert!(!dir
-        .join("plugins")
-        .join(OPENCODE_V2_PLUGIN_INSTALL_NAME)
-        .exists());
+    assert!(!dir.join(OPENCODE_V2_TUI_PLUGIN_DIR).exists());
     std::env::remove_var("HOME");
     fs::remove_dir_all(base).unwrap();
 }
@@ -2834,128 +2810,25 @@ fn opencode_recovery_copy_blocks_retry_before_parsing_or_asset_changes() {
     }
     assert_eq!(fs::read_to_string(&plugin).unwrap(), "previous integration");
     assert!(!dir.join("tui.jsonc").exists());
-    assert!(!dir
-        .join("plugins")
-        .join(OPENCODE_V2_PLUGIN_INSTALL_NAME)
-        .exists());
+    assert!(!dir.join(OPENCODE_V2_TUI_PLUGIN_DIR).exists());
     std::env::remove_var("HOME");
     fs::remove_dir_all(base).unwrap();
 }
 
 #[test]
-fn install_opencode_writes_to_opencode_and_shuvcode_roots() {
+fn opencode_invalid_cli_config_does_not_overwrite_existing_plugins() {
     let _lock = integration_env_lock();
     let base = unique_base();
     let home = base.join("home");
-    let opencode_dir = home.join(".config/opencode");
-    let shuvcode_dir = home.join(".config/shuvcode");
-    fs::create_dir_all(&opencode_dir).unwrap();
-    fs::create_dir_all(&shuvcode_dir).unwrap();
+    let dir = home.join(".config/opencode");
+    fs::create_dir_all(dir.join("plugins")).unwrap();
     std::env::set_var("HOME", &home);
-    std::env::remove_var("OPENCODE_CONFIG_DIR");
-
-    let installed = install_opencode().unwrap();
-
-    assert!(installed.removed_v1_plugin_paths.is_empty());
-    assert_eq!(installed.v2_plugin_dirs.len(), 2);
-    assert_eq!(installed.tui_plugin_paths.len(), 2);
-    assert_eq!(installed.tui_config_paths.len(), 2);
-    for dir in [&opencode_dir, &shuvcode_dir] {
-        assert!(!dir
-            .join("plugins")
-            .join(OPENCODE_PLUGIN_INSTALL_NAME)
-            .exists());
-        assert!(dir
-            .join("plugins")
-            .join(OPENCODE_V2_PLUGIN_INSTALL_NAME)
-            .join(OPENCODE_V2_PLUGIN_INDEX_INSTALL_NAME)
-            .is_file());
-        assert!(dir
-            .join("plugins")
-            .join(OPENCODE_V2_PLUGIN_INSTALL_NAME)
-            .join(OPENCODE_V2_PLUGIN_TUI_INSTALL_NAME)
-            .is_file());
-        assert!(dir.join(OPENCODE_TUI_PLUGIN_INSTALL_NAME).is_file());
-        assert!(dir.join("tui.jsonc").is_file());
-    }
-
-    std::env::remove_var("HOME");
-    let _ = fs::remove_dir_all(base);
-}
-
-#[test]
-fn install_opencode_removes_the_managed_v1_file_that_shadows_the_v2_package() {
-    let _lock = integration_env_lock();
-    let base = unique_base();
-    let home = base.join("home");
-    let opencode_dir = home.join(".config/opencode");
-    let plugins_dir = opencode_dir.join("plugins");
-    fs::create_dir_all(&plugins_dir).unwrap();
-    let legacy_path = plugins_dir.join(OPENCODE_LEGACY_PLUGIN_INSTALL_NAME);
-    fs::write(&legacy_path, OPENCODE_PLUGIN_ASSET).unwrap();
-    std::env::set_var("HOME", &home);
-    std::env::remove_var("OPENCODE_CONFIG_DIR");
-
-    let installed = install_opencode().unwrap();
-
-    assert!(!legacy_path.exists());
-    assert!(!plugins_dir.join(OPENCODE_PLUGIN_INSTALL_NAME).exists());
-    assert_eq!(installed.removed_v1_plugin_paths, vec![legacy_path]);
-    assert!(installed.v2_plugin_dirs[0]
-        .join(OPENCODE_V2_PLUGIN_INDEX_INSTALL_NAME)
-        .is_file());
-
-    std::env::remove_var("HOME");
-    let _ = fs::remove_dir_all(base);
-}
-
-#[test]
-fn install_opencode_removes_leftover_v1_autodiscovery_js() {
-    let _lock = integration_env_lock();
-    let base = unique_base();
-    let home = base.join("home");
-    let opencode_dir = home.join(".config/opencode");
-    let plugins_dir = opencode_dir.join("plugins");
-    fs::create_dir_all(&plugins_dir).unwrap();
-    let leftover_path = plugins_dir.join(OPENCODE_PLUGIN_INSTALL_NAME);
-    fs::write(&leftover_path, OPENCODE_PLUGIN_ASSET).unwrap();
-    std::env::set_var("HOME", &home);
-    std::env::remove_var("OPENCODE_CONFIG_DIR");
-
-    let installed = install_opencode().unwrap();
-
-    assert!(!leftover_path.exists());
-    assert_eq!(installed.removed_v1_plugin_paths, vec![leftover_path]);
-    assert!(installed.v2_plugin_dirs[0]
-        .join(OPENCODE_V2_PLUGIN_INDEX_INSTALL_NAME)
-        .is_file());
-
-    std::env::remove_var("HOME");
-    let _ = fs::remove_dir_all(base);
-}
-
-#[test]
-fn install_opencode_preserves_an_unmanaged_file_at_the_legacy_path() {
-    let _lock = integration_env_lock();
-    let base = unique_base();
-    let home = base.join("home");
-    let opencode_dir = home.join(".config/opencode");
-    let plugins_dir = opencode_dir.join("plugins");
-    fs::create_dir_all(&plugins_dir).unwrap();
-    let legacy_path = plugins_dir.join(OPENCODE_LEGACY_PLUGIN_INSTALL_NAME);
-    fs::write(&legacy_path, "export const custom = true;\n").unwrap();
-    std::env::set_var("HOME", &home);
-    std::env::remove_var("OPENCODE_CONFIG_DIR");
-
-    let error = install_opencode().unwrap_err().to_string();
-
-    assert!(error.contains("shadows the Herdr v2 package"));
-    assert_eq!(
-        fs::read_to_string(&legacy_path).unwrap(),
-        "export const custom = true;\n"
-    );
-    assert!(!plugins_dir.join(OPENCODE_PLUGIN_INSTALL_NAME).exists());
-
+    let plugin = dir.join("plugins").join(OPENCODE_PLUGIN_INSTALL_NAME);
+    fs::write(&plugin, "previous integration").unwrap();
+    fs::write(dir.join("cli.json"), r#"{"plugins":{}}"#).unwrap();
+    assert!(install_opencode().is_err());
+    assert_eq!(fs::read_to_string(plugin).unwrap(), "previous integration");
+    assert!(!dir.join("tui.jsonc").exists());
     std::env::remove_var("HOME");
     let _ = fs::remove_dir_all(base);
 }
@@ -2968,88 +2841,22 @@ fn opencode_status_requires_the_tui_plugin_and_config_entry() {
     let opencode_dir = home.join(".config/opencode");
     fs::create_dir_all(&opencode_dir).unwrap();
     std::env::set_var("HOME", &home);
-    std::env::remove_var("OPENCODE_CONFIG_DIR");
     let installed = install_opencode().unwrap();
-    let status_path = installed.v2_plugin_dirs[0].join(OPENCODE_V2_PLUGIN_INDEX_INSTALL_NAME);
     let status = || {
         integration_status_at(
             crate::api::schema::IntegrationTarget::Opencode,
-            status_path.clone(),
+            installed.plugin_path.clone(),
             OPENCODE_INTEGRATION_VERSION,
         )
         .state
     };
 
     assert_eq!(status(), IntegrationStatusKind::Current);
-    fs::remove_file(&installed.tui_plugin_paths[0]).unwrap();
+    fs::remove_file(&installed.tui_plugin_path).unwrap();
     assert_eq!(status(), IntegrationStatusKind::Outdated);
-    fs::write(&installed.tui_plugin_paths[0], OPENCODE_TUI_PLUGIN_ASSET).unwrap();
+    fs::write(&installed.tui_plugin_path, OPENCODE_TUI_PLUGIN_ASSET).unwrap();
     super::opencode_config::remove_tui_plugin(&opencode_dir, OPENCODE_TUI_PLUGIN_SPEC).unwrap();
     assert_eq!(status(), IntegrationStatusKind::Outdated);
-
-    std::env::remove_var("HOME");
-    let _ = fs::remove_dir_all(base);
-}
-
-#[test]
-fn opencode_status_requires_current_v2_tui_entry() {
-    let _lock = integration_env_lock();
-    let base = unique_base();
-    let home = base.join("home");
-    let opencode_dir = home.join(".config/opencode");
-    fs::create_dir_all(&opencode_dir).unwrap();
-    std::env::set_var("HOME", &home);
-    std::env::remove_var("OPENCODE_CONFIG_DIR");
-    let installed = install_opencode().unwrap();
-    let entry = installed.v2_plugin_dirs[0].join(OPENCODE_V2_PLUGIN_TUI_INSTALL_NAME);
-    let status = || {
-        integration_status_at(
-            crate::api::schema::IntegrationTarget::Opencode,
-            installed.v2_plugin_dirs[0].join(OPENCODE_V2_PLUGIN_INDEX_INSTALL_NAME),
-            OPENCODE_INTEGRATION_VERSION,
-        )
-        .state
-    };
-
-    assert_eq!(status(), IntegrationStatusKind::Current);
-    fs::remove_file(&entry).unwrap();
-    assert_eq!(status(), IntegrationStatusKind::Outdated);
-    fs::write(&entry, "// HERDR_INTEGRATION_VERSION=11\n").unwrap();
-    assert_eq!(status(), IntegrationStatusKind::Outdated);
-    fs::write(&entry, OPENCODE_V2_PLUGIN_TUI_ASSET).unwrap();
-    assert_eq!(status(), IntegrationStatusKind::Current);
-
-    std::env::remove_var("HOME");
-    let _ = fs::remove_dir_all(base);
-}
-
-#[test]
-fn opencode_status_is_outdated_when_v1_autodiscovery_js_is_present() {
-    let _lock = integration_env_lock();
-    let base = unique_base();
-    let home = base.join("home");
-    let opencode_dir = home.join(".config/opencode");
-    fs::create_dir_all(&opencode_dir).unwrap();
-    std::env::set_var("HOME", &home);
-    std::env::remove_var("OPENCODE_CONFIG_DIR");
-    let installed = install_opencode().unwrap();
-    let leftover_path = opencode_dir
-        .join("plugins")
-        .join(OPENCODE_PLUGIN_INSTALL_NAME);
-    let status = || {
-        integration_status_at(
-            crate::api::schema::IntegrationTarget::Opencode,
-            installed.v2_plugin_dirs[0].join(OPENCODE_V2_PLUGIN_INDEX_INSTALL_NAME),
-            OPENCODE_INTEGRATION_VERSION,
-        )
-        .state
-    };
-
-    assert_eq!(status(), IntegrationStatusKind::Current);
-    fs::write(&leftover_path, OPENCODE_PLUGIN_ASSET).unwrap();
-    assert_eq!(status(), IntegrationStatusKind::Outdated);
-    fs::remove_file(&leftover_path).unwrap();
-    assert_eq!(status(), IntegrationStatusKind::Current);
 
     std::env::remove_var("HOME");
     let _ = fs::remove_dir_all(base);
@@ -3063,57 +2870,23 @@ fn uninstall_opencode_removes_plugins_and_managed_tui_config_entry() {
     let opencode_dir = home.join(".config/opencode");
     fs::create_dir_all(&opencode_dir).unwrap();
     std::env::set_var("HOME", &home);
-    std::env::remove_var("OPENCODE_CONFIG_DIR");
     let installed = install_opencode().unwrap();
 
     let result = uninstall_opencode().unwrap();
 
-    assert!(result.removed_plugins.is_empty());
-    assert_eq!(result.removed_v2_plugin_dirs.len(), 1);
-    assert_eq!(result.removed_tui_plugins.len(), 1);
+    assert!(result.removed_plugin);
+    assert!(result.removed_tui_plugin);
     assert_eq!(
         result.updated_tui_configs,
-        vec![installed.tui_config_paths[0].clone()]
+        vec![installed.tui_config_path.clone()]
     );
-    assert!(!result.plugin_paths[0].exists());
-    assert!(!result.v2_plugin_dirs[0].exists());
-    assert!(!result.tui_plugin_paths[0].exists());
-    assert!(installed.tui_config_paths[0].exists());
+    assert!(!result.plugin_path.exists());
+    assert!(!result.tui_plugin_path.exists());
+    assert!(installed.tui_config_path.exists());
     let tui_config: Value =
-        serde_json::from_str(&fs::read_to_string(&installed.tui_config_paths[0]).unwrap()).unwrap();
+        serde_json::from_str(&fs::read_to_string(&installed.tui_config_path).unwrap()).unwrap();
     assert_eq!(tui_config, json!({}));
-    assert!(result
-        .v2_plugin_dirs
-        .iter()
-        .any(|path| path == &installed.v2_plugin_dirs[0]));
-
-    std::env::remove_var("HOME");
-    let _ = fs::remove_dir_all(base);
-}
-
-#[test]
-fn uninstall_opencode_removes_leftover_v1_autodiscovery_js() {
-    let _lock = integration_env_lock();
-    let base = unique_base();
-    let home = base.join("home");
-    let opencode_dir = home.join(".config/opencode");
-    fs::create_dir_all(&opencode_dir).unwrap();
-    std::env::set_var("HOME", &home);
-    std::env::remove_var("OPENCODE_CONFIG_DIR");
-    let installed = install_opencode().unwrap();
-    let leftover_path = opencode_dir
-        .join("plugins")
-        .join(OPENCODE_PLUGIN_INSTALL_NAME);
-    fs::write(&leftover_path, OPENCODE_PLUGIN_ASSET).unwrap();
-
-    let result = uninstall_opencode().unwrap();
-
-    assert!(!leftover_path.exists());
-    assert!(result
-        .removed_plugins
-        .iter()
-        .any(|path| path == &leftover_path));
-    assert!(!installed.v2_plugin_dirs[0].exists());
+    assert_eq!(installed.plugin_path, result.plugin_path);
 
     std::env::remove_var("HOME");
     let _ = fs::remove_dir_all(base);
@@ -3128,7 +2901,6 @@ fn install_opencode_invalid_tui_config_does_not_write_plugins() {
     fs::create_dir_all(&opencode_dir).unwrap();
     fs::write(opencode_dir.join("tui.jsonc"), r#"{"plugin":{}}"#).unwrap();
     std::env::set_var("HOME", &home);
-    std::env::remove_var("OPENCODE_CONFIG_DIR");
 
     let err = install_opencode().unwrap_err().to_string();
 
@@ -3163,7 +2935,6 @@ fn uninstall_opencode_removes_plugins_when_tui_config_is_invalid() {
     )
     .unwrap();
     std::env::set_var("HOME", &home);
-    std::env::remove_var("OPENCODE_CONFIG_DIR");
 
     let err = uninstall_opencode().unwrap_err().to_string();
 
@@ -3186,11 +2957,79 @@ fn install_opencode_errors_when_config_dir_missing() {
     let home = base.join("home");
     fs::create_dir_all(&home).unwrap();
     std::env::set_var("HOME", &home);
-    std::env::remove_var("OPENCODE_CONFIG_DIR");
 
     let err = install_opencode().unwrap_err().to_string();
 
-    assert!(err.contains("opencode/shuvcode config directory not found"));
+    assert!(err.contains("opencode config directory not found"));
+
+    std::env::remove_var("HOME");
+    let _ = fs::remove_dir_all(base);
+}
+
+#[test]
+fn install_opencode_writes_to_opencode_and_shuvcode_roots() {
+    let _lock = integration_env_lock();
+    let base = unique_base();
+    let home = base.join("home");
+    let opencode_dir = home.join(".config/opencode");
+    let shuvcode_dir = home.join(".config/shuvcode");
+    fs::create_dir_all(&opencode_dir).unwrap();
+    fs::create_dir_all(&shuvcode_dir).unwrap();
+    std::env::set_var("HOME", &home);
+    std::env::remove_var("OPENCODE_CONFIG_DIR");
+
+    let installed = install_opencode().unwrap();
+
+    assert_eq!(
+        installed.plugin_path,
+        opencode_dir
+            .join("plugins")
+            .join(OPENCODE_PLUGIN_INSTALL_NAME)
+    );
+    for dir in [&opencode_dir, &shuvcode_dir] {
+        assert_eq!(
+            fs::read_to_string(dir.join("plugins").join(OPENCODE_PLUGIN_INSTALL_NAME)).unwrap(),
+            OPENCODE_PLUGIN_ASSET
+        );
+        assert!(dir.join(OPENCODE_TUI_PLUGIN_INSTALL_NAME).is_file());
+        assert!(dir
+            .join(OPENCODE_V2_TUI_PLUGIN_DIR)
+            .join("tui.js")
+            .is_file());
+        assert!(dir.join("tui.jsonc").is_file());
+        assert!(dir.join("cli.json").is_file());
+    }
+
+    std::env::remove_var("HOME");
+    let _ = fs::remove_dir_all(base);
+}
+
+#[test]
+fn install_opencode_removes_leftover_fork_v2_package() {
+    let _lock = integration_env_lock();
+    let base = unique_base();
+    let home = base.join("home");
+    let opencode_dir = home.join(".config/opencode");
+    let plugins_dir = opencode_dir.join("plugins");
+    let leftover = plugins_dir.join(OPENCODE_FORK_V2_PACKAGE_DIR);
+    fs::create_dir_all(&leftover).unwrap();
+    fs::write(leftover.join("index.ts"), "leftover fork package").unwrap();
+    fs::write(
+        plugins_dir.join(OPENCODE_FORK_V1_RENAMED_PLUGIN),
+        "leftover renamed v1",
+    )
+    .unwrap();
+    std::env::set_var("HOME", &home);
+    std::env::remove_var("OPENCODE_CONFIG_DIR");
+
+    let installed = install_opencode().unwrap();
+
+    assert!(!leftover.exists());
+    assert!(!plugins_dir.join(OPENCODE_FORK_V1_RENAMED_PLUGIN).exists());
+    assert_eq!(
+        fs::read_to_string(&installed.plugin_path).unwrap(),
+        OPENCODE_PLUGIN_ASSET
+    );
 
     std::env::remove_var("HOME");
     let _ = fs::remove_dir_all(base);
