@@ -179,9 +179,6 @@ const DROID_REMOVED_LIFECYCLE_HOOK_EVENTS: [(&str, &str); 9] = [
     ("PreCompact", "working"),
     ("SessionEnd", "release"),
 ];
-// Previous V1 auto-discovery filename. OpenCode V2 loads every `.js` file in
-// `plugins/`, and the V1 asset has no `export default { id, setup|effect }`, so
-// install no longer writes it. Keep the name to remove leftovers.
 const OPENCODE_PLUGIN_INSTALL_NAME: &str = "herdr-agent-state.js";
 const OPENCODE_PLUGIN_ASSET: &str = include_str!("assets/opencode/herdr-agent-state.js");
 const OPENCODE_TUI_PLUGIN_INSTALL_NAME: &str = "herdr-tui-session.js";

@@ -479,18 +479,26 @@ pub(crate) fn install_opencode() -> io::Result<OpenCodeInstallPaths> {
         ));
     }
 
-    let mut primary = None;
+    let mut primary: Option<OpenCodeInstallPaths> = None;
+    let mut any_cli_deferred = false;
     for dir in &dirs {
         let installed = install_opencode_into(dir)?;
+        if installed.cli_config_path.is_none() {
+            any_cli_deferred = true;
+        }
         if primary.is_none() {
             primary = Some(installed);
         }
     }
-    primary.ok_or_else(|| {
+    let mut primary = primary.ok_or_else(|| {
         io::Error::other(
             "opencode config directory not found under ~/.config/opencode or ~/.config/shuvcode. install opencode or shuvcode first",
         )
-    })
+    })?;
+    if any_cli_deferred {
+        primary.cli_config_path = None;
+    }
+    Ok(primary)
 }
 
 fn install_opencode_into(dir: &Path) -> io::Result<OpenCodeInstallPaths> {
@@ -896,27 +904,53 @@ pub(crate) fn uninstall_droid() -> io::Result<DroidUninstallResult> {
 
 pub(crate) fn uninstall_opencode() -> io::Result<OpenCodeUninstallResult> {
     let dirs = opencode_config_dirs()?;
-    let primary = dirs
+    let existing_dirs = existing_opencode_config_dirs()?;
+    let primary = existing_dirs
         .first()
+        .or_else(|| dirs.first())
         .cloned()
         .ok_or_else(|| io::Error::other("opencode config directory not found"))?;
 
     let mut primary_result = None;
+    let mut any_removed_plugin = None;
+    let mut any_removed_tui_plugin = None;
+    let mut all_updated_tui_configs = Vec::new();
     let mut errors = Vec::new();
     for dir in dirs {
         if dir != primary && !dir.is_dir() {
             continue;
         }
         match uninstall_opencode_from(&dir) {
-            Ok(result) if dir == primary => primary_result = Some(result),
-            Ok(_) => {}
+            Ok(result) => {
+                if result.removed_plugin && any_removed_plugin.is_none() {
+                    any_removed_plugin = Some(result.plugin_path.clone());
+                }
+                if result.removed_tui_plugin && any_removed_tui_plugin.is_none() {
+                    any_removed_tui_plugin = Some(result.tui_plugin_path.clone());
+                }
+                all_updated_tui_configs.extend(result.updated_tui_configs.clone());
+                if dir == primary {
+                    primary_result = Some(result);
+                }
+            }
             Err(err) => errors.push(err.to_string()),
         }
     }
     if !errors.is_empty() {
         return Err(io::Error::other(errors.join("; ")));
     }
-    primary_result.ok_or_else(|| io::Error::other("opencode config directory not found"))
+    let mut result =
+        primary_result.ok_or_else(|| io::Error::other("opencode config directory not found"))?;
+    if let Some(path) = any_removed_plugin {
+        result.removed_plugin = true;
+        result.plugin_path = path;
+    }
+    if let Some(path) = any_removed_tui_plugin {
+        result.removed_tui_plugin = true;
+        result.tui_plugin_path = path;
+    }
+    result.updated_tui_configs = all_updated_tui_configs;
+    Ok(result)
 }
 
 fn uninstall_opencode_from(dir: &Path) -> io::Result<OpenCodeUninstallResult> {

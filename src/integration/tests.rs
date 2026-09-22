@@ -3005,6 +3005,112 @@ fn install_opencode_writes_to_opencode_and_shuvcode_roots() {
 }
 
 #[test]
+fn uninstall_opencode_removes_from_opencode_and_shuvcode_roots() {
+    let _lock = integration_env_lock();
+    let base = unique_base();
+    let home = base.join("home");
+    let opencode_dir = home.join(".config/opencode");
+    let shuvcode_dir = home.join(".config/shuvcode");
+    fs::create_dir_all(&opencode_dir).unwrap();
+    fs::create_dir_all(&shuvcode_dir).unwrap();
+    std::env::set_var("HOME", &home);
+    std::env::remove_var("OPENCODE_CONFIG_DIR");
+
+    install_opencode().unwrap();
+    let uninstalled = uninstall_opencode().unwrap();
+
+    assert!(uninstalled.removed_plugin);
+    assert!(uninstalled.removed_tui_plugin);
+    assert_eq!(
+        uninstalled.updated_tui_configs,
+        vec![
+            opencode_dir.join("tui.jsonc"),
+            shuvcode_dir.join("tui.jsonc"),
+        ]
+    );
+    for dir in [&opencode_dir, &shuvcode_dir] {
+        assert!(!dir
+            .join("plugins")
+            .join(OPENCODE_PLUGIN_INSTALL_NAME)
+            .exists());
+        assert!(!dir.join(OPENCODE_TUI_PLUGIN_INSTALL_NAME).exists());
+        assert!(!dir.join(OPENCODE_V2_TUI_PLUGIN_DIR).exists());
+    }
+
+    std::env::remove_var("HOME");
+    let _ = fs::remove_dir_all(base);
+}
+
+#[test]
+fn uninstall_opencode_cleans_shuvcode_only_root_and_reports_shuvcode_paths() {
+    let _lock = integration_env_lock();
+    let base = unique_base();
+    let home = base.join("home");
+    let shuvcode_dir = home.join(".config/shuvcode");
+    fs::create_dir_all(&shuvcode_dir).unwrap();
+    std::env::set_var("HOME", &home);
+    std::env::remove_var("OPENCODE_CONFIG_DIR");
+
+    let installed = install_opencode().unwrap();
+    assert_eq!(
+        installed.plugin_path,
+        shuvcode_dir
+            .join("plugins")
+            .join(OPENCODE_PLUGIN_INSTALL_NAME)
+    );
+
+    let uninstalled = uninstall_opencode().unwrap();
+    assert!(uninstalled.removed_plugin);
+    assert!(uninstalled.removed_tui_plugin);
+    assert_eq!(
+        uninstalled.plugin_path,
+        shuvcode_dir
+            .join("plugins")
+            .join(OPENCODE_PLUGIN_INSTALL_NAME)
+    );
+    assert_eq!(
+        uninstalled.tui_plugin_path,
+        shuvcode_dir.join(OPENCODE_TUI_PLUGIN_INSTALL_NAME)
+    );
+    assert_eq!(
+        uninstalled.updated_tui_configs,
+        vec![shuvcode_dir.join("tui.jsonc")]
+    );
+    assert!(!shuvcode_dir
+        .join("plugins")
+        .join(OPENCODE_PLUGIN_INSTALL_NAME)
+        .exists());
+    assert!(!shuvcode_dir.join(OPENCODE_TUI_PLUGIN_INSTALL_NAME).exists());
+    assert!(!shuvcode_dir.join(OPENCODE_V2_TUI_PLUGIN_DIR).exists());
+
+    std::env::remove_var("HOME");
+    let _ = fs::remove_dir_all(base);
+}
+
+#[test]
+fn install_opencode_defers_v2_when_secondary_root_migration_pending() {
+    let _lock = integration_env_lock();
+    let base = unique_base();
+    let home = base.join("home");
+    let opencode_dir = home.join(".config/opencode");
+    let shuvcode_dir = home.join(".config/shuvcode");
+    fs::create_dir_all(&opencode_dir).unwrap();
+    fs::create_dir_all(&shuvcode_dir).unwrap();
+    fs::write(shuvcode_dir.join("tui.json"), "{}").unwrap();
+    std::env::set_var("HOME", &home);
+    std::env::remove_var("OPENCODE_CONFIG_DIR");
+
+    let installed = install_opencode().unwrap();
+
+    assert!(installed.cli_config_path.is_none());
+    assert!(opencode_dir.join("cli.json").is_file());
+    assert!(!shuvcode_dir.join("cli.json").exists());
+
+    std::env::remove_var("HOME");
+    let _ = fs::remove_dir_all(base);
+}
+
+#[test]
 fn install_opencode_removes_leftover_fork_v2_package() {
     let _lock = integration_env_lock();
     let base = unique_base();
