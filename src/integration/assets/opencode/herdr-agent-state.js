@@ -213,3 +213,12 @@ export const HerdrAgentStatePlugin = async () => {
     },
   };
 };
+
+// V1 (1.18.29+) calls server(). V2 calls setup() instead. Its shared server
+// cannot attribute sessions using its process environment: the pane-local TUI
+// owns both selection and lifecycle reporting there, including remote servers.
+export default {
+  id: "herdr.opencode",
+  server: HerdrAgentStatePlugin,
+  setup() {},
+};

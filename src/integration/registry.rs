@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 use super::env::hermes_dir;
 use super::env::{
     antigravity_cli_dir, claude_dir, codex_dir, copilot_dir, cursor_dir, devin_dir, droid_dir,
-    grok_dir, hermes_plugin_dir, kilo_dir, kimi_dir, mastracode_dir, omp_extension_dir,
+    grok_dir, hermes_plugin_dir, kilo_dir, kimi_dir, letta_dir, mastracode_dir, omp_extension_dir,
     opencode_config_dirs, opencode_dir, pi_extension_dir, qodercli_dir, qwen_dir,
     shuvpi_extension_dir,
 };
@@ -439,6 +439,38 @@ fn opencode_tui_integration_is_valid(plugin_path: &Path, expected_version: u32) 
             config_dir,
             super::OPENCODE_TUI_PLUGIN_SPEC,
         )
+        && (!config_dir.join("cli.json").exists()
+            || (super::opencode_config::cli_plugin_is_configured(
+                config_dir,
+                super::OPENCODE_V2_TUI_PLUGIN_SPEC,
+            ) && fs::read_to_string(
+                config_dir
+                    .join(super::OPENCODE_V2_TUI_PLUGIN_DIR)
+                    .join("tui.js"),
+            )
+            .ok()
+            .and_then(|content| parse_integration_version(&content))
+            .is_some_and(|version| version >= expected_version)))
+}
+
+fn integration_state_for_path(
+    path: &Path,
+    expected_version: u32,
+) -> (super::IntegrationStatusKind, Option<u32>) {
+    if !path.is_file() {
+        return (super::IntegrationStatusKind::NotInstalled, None);
+    }
+
+    let installed_version = fs::read_to_string(path)
+        .ok()
+        .and_then(|content| parse_integration_version(&content));
+    let state = if installed_version.is_some_and(|version| version >= expected_version) {
+        super::IntegrationStatusKind::Current
+    } else {
+        super::IntegrationStatusKind::Outdated
+    };
+
+    (state, installed_version)
 }
 
 pub(crate) fn integration_status_at(
@@ -446,27 +478,7 @@ pub(crate) fn integration_status_at(
     path: PathBuf,
     expected_version: u32,
 ) -> super::IntegrationStatus {
-    if target == crate::api::schema::IntegrationTarget::Opencode {
-        return opencode_integration_status(path, expected_version);
-    }
-
-    if !path.is_file() {
-        return super::IntegrationStatus {
-            target,
-            path,
-            state: super::IntegrationStatusKind::NotInstalled,
-            installed_version: None,
-            expected_version,
-        };
-    }
-
-    let content = fs::read_to_string(&path).ok();
-    let installed_version = content.as_deref().and_then(parse_integration_version);
-    let mut state = if installed_version.is_some_and(|version| version >= expected_version) {
-        super::IntegrationStatusKind::Current
-    } else {
-        super::IntegrationStatusKind::Outdated
-    };
+    let (mut state, installed_version) = integration_state_for_path(&path, expected_version);
 
     // These extension hosts can share one directory. A copied sibling asset
     // may have a current version while reporting the wrong official identity.
@@ -476,8 +488,14 @@ pub(crate) fn integration_status_at(
         crate::api::schema::IntegrationTarget::Omp => Some("omp"),
         _ => None,
     };
-    if expected_id
-        .is_some_and(|expected| content.as_deref().and_then(parse_integration_id) != Some(expected))
+    if state != super::IntegrationStatusKind::NotInstalled
+        && expected_id.is_some_and(|expected| {
+            fs::read_to_string(&path)
+                .ok()
+                .as_deref()
+                .and_then(parse_integration_id)
+                != Some(expected)
+        })
     {
         state = super::IntegrationStatusKind::Outdated;
     }
@@ -508,141 +526,40 @@ pub(crate) fn integration_status_at(
     }
 }
 
-fn opencode_v2_plugin_index(dir: &Path) -> PathBuf {
-    dir.join("plugins")
-        .join(super::OPENCODE_V2_PLUGIN_INSTALL_NAME)
-        .join(super::OPENCODE_V2_PLUGIN_INDEX_INSTALL_NAME)
-}
-
-fn opencode_v1_autodiscovery_paths(dir: &Path) -> [PathBuf; 2] {
-    let plugins = dir.join("plugins");
-    [
-        plugins.join(super::OPENCODE_PLUGIN_INSTALL_NAME),
-        plugins.join(super::OPENCODE_LEGACY_PLUGIN_INSTALL_NAME),
-    ]
-}
-
 fn preferred_opencode_status_path() -> io::Result<PathBuf> {
+    let plugin = |dir: &Path| {
+        dir.join("plugins")
+            .join(super::OPENCODE_PLUGIN_INSTALL_NAME)
+    };
     let dirs = opencode_config_dirs()?;
     for dir in &dirs {
-        let v2 = opencode_v2_plugin_index(dir);
-        if v2.is_file() {
-            return Ok(v2);
+        let path = plugin(dir);
+        if path.is_file() {
+            return Ok(path);
         }
     }
-    for dir in &dirs {
-        for path in opencode_v1_autodiscovery_paths(dir) {
-            if path.is_file() {
-                return Ok(path);
-            }
-        }
-    }
-
-    if let Some(primary) = dirs.into_iter().next() {
-        return Ok(opencode_v2_plugin_index(&primary));
-    }
-    opencode_dir().map(|dir| opencode_v2_plugin_index(&dir))
+    opencode_dir().map(|dir| plugin(&dir))
 }
 
-fn opencode_integration_status(path: PathBuf, expected_version: u32) -> super::IntegrationStatus {
-    let Ok(dirs) = opencode_config_dirs() else {
-        return super::IntegrationStatus {
-            target: crate::api::schema::IntegrationTarget::Opencode,
-            path,
-            state: super::IntegrationStatusKind::NotInstalled,
-            installed_version: None,
-            expected_version,
-        };
-    };
-
-    let existing_dirs: Vec<_> = dirs.into_iter().filter(|dir| dir.is_dir()).collect();
-    if existing_dirs.is_empty() {
-        return super::IntegrationStatus {
-            target: crate::api::schema::IntegrationTarget::Opencode,
-            path,
-            state: super::IntegrationStatusKind::NotInstalled,
-            installed_version: None,
-            expected_version,
-        };
-    }
-
-    let mut versions = Vec::new();
-    let mut any_install = false;
-    let mut all_complete = true;
-
-    for dir in &existing_dirs {
-        let v1_paths = opencode_v1_autodiscovery_paths(dir);
-        let v2 = opencode_v2_plugin_index(dir);
-        let v2_tui = dir
-            .join("plugins")
-            .join(super::OPENCODE_V2_PLUGIN_INSTALL_NAME)
-            .join(super::OPENCODE_V2_PLUGIN_TUI_INSTALL_NAME);
-        let tui = dir.join(super::OPENCODE_TUI_PLUGIN_INSTALL_NAME);
-        let v1_present = v1_paths.iter().any(|path| path.is_file());
-
-        let v1_versions = v1_paths.iter().filter_map(|path| {
-            fs::read_to_string(path)
-                .ok()
-                .and_then(|content| parse_integration_version(&content))
-        });
-        let v2_version = fs::read_to_string(&v2)
-            .ok()
-            .and_then(|content| parse_integration_version(&content));
-        let v2_tui_version = fs::read_to_string(&v2_tui)
-            .ok()
-            .and_then(|content| parse_integration_version(&content));
-        let tui_version = fs::read_to_string(&tui)
-            .ok()
-            .and_then(|content| parse_integration_version(&content));
-        let tui_configured =
-            super::opencode_config::tui_plugin_is_configured(dir, super::OPENCODE_TUI_PLUGIN_SPEC);
-
-        if v1_present
-            || v2_version.is_some()
-            || tui_version.is_some()
-            || v2.is_file()
-            || v2_tui.is_file()
-            || tui.is_file()
-        {
-            any_install = true;
-        }
-        // A V1-only `.js` file in `plugins/` fails OpenCode V2 auto-discovery.
-        if v1_present
-            || v2_version.is_none()
-            || v2_tui_version.is_none()
-            || tui_version.is_none()
-            || !tui_configured
-        {
-            all_complete = false;
-        }
-        versions.extend(v1_versions);
-        if let Some(version) = v2_version {
-            versions.push(version);
-        }
-        if let Some(version) = v2_tui_version {
-            versions.push(version);
-        }
-        if let Some(version) = tui_version {
-            versions.push(version);
-        }
-    }
-
-    let installed_version = versions.iter().copied().min();
-    let state = if !any_install {
-        super::IntegrationStatusKind::NotInstalled
-    } else if all_complete && installed_version.is_some_and(|version| version >= expected_version) {
-        super::IntegrationStatusKind::Current
-    } else {
-        super::IntegrationStatusKind::Outdated
-    };
-
-    super::IntegrationStatus {
-        target: crate::api::schema::IntegrationTarget::Opencode,
+/// Letta is intentionally kept out of the frozen client endpoint
+/// `IntegrationTarget` enum so published generation-1 clients never receive an
+/// unknown variant. It is installable and reportable as an experimental
+/// CLI-only target until the agent registry replaces the enum-keyed registry.
+pub(crate) fn experimental_letta_integration_status() -> Option<super::ExperimentalIntegrationStatus>
+{
+    let path = letta_dir()
+        .ok()?
+        .join("hooks")
+        .join(super::LETTA_HOOK_INSTALL_NAME);
+    let (state, installed_version) =
+        integration_state_for_path(&path, super::LETTA_INTEGRATION_VERSION);
+    Some(super::ExperimentalIntegrationStatus {
+        label: "letta",
         path,
         state,
         installed_version,
-        expected_version,
-    }
+        expected_version: super::LETTA_INTEGRATION_VERSION,
+    })
 }
 
 pub(crate) fn parse_integration_version(content: &str) -> Option<u32> {

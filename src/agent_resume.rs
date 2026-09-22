@@ -256,6 +256,26 @@ pub fn plan(source: &str, agent: &str, session_ref: &AgentSessionRef) -> Option<
             };
             vec![binary.into(), "--resume".into(), session_ref.value.clone()]
         }
+        ("herdr:letta", "letta", AgentSessionRefKind::Id) => {
+            if let Some(agent_id) = session_ref.value.strip_prefix("default:") {
+                if agent_id.is_empty() {
+                    return None;
+                }
+                vec![
+                    "letta".into(),
+                    "--conversation".into(),
+                    "default".into(),
+                    "--agent".into(),
+                    agent_id.into(),
+                ]
+            } else {
+                vec![
+                    "letta".into(),
+                    "--conversation".into(),
+                    session_ref.value.clone(),
+                ]
+            }
+        }
         _ => return None,
     };
 
@@ -295,6 +315,7 @@ pub(crate) fn is_official_agent_source(source: &str, agent: &str) -> bool {
             | ("herdr:cursor", "cursor")
             | ("herdr:antigravity_cli", "agy")
             | ("herdr:grok", "grok")
+            | ("herdr:letta", "letta")
     )
 }
 
@@ -578,6 +599,32 @@ mod tests {
                 "unexpected grok resume argv: {argv:?}"
             );
         }
+        assert_eq!(
+            plan(
+                "herdr:letta",
+                "letta",
+                &AgentSessionRef::id("conversation-123").unwrap()
+            )
+            .unwrap()
+            .argv,
+            vec!["letta", "--conversation", "conversation-123"]
+        );
+        assert_eq!(
+            plan(
+                "herdr:letta",
+                "letta",
+                &AgentSessionRef::id("default:agent-123").unwrap()
+            )
+            .unwrap()
+            .argv,
+            vec!["letta", "--conversation", "default", "--agent", "agent-123"]
+        );
+        assert!(plan(
+            "herdr:letta",
+            "letta",
+            &AgentSessionRef::id("default:").unwrap()
+        )
+        .is_none());
     }
 
     #[test]
