@@ -1,8 +1,13 @@
 from __future__ import annotations
 
+import os
+import subprocess
 import unittest
+from pathlib import Path
 
 from scripts import fork_release
+
+DISCORD_NOTIFY = Path(__file__).resolve().parent / "discord_release_notify.sh"
 
 
 def _assets(tag: str) -> tuple[dict[str, str], dict[str, str]]:
@@ -88,6 +93,47 @@ class ForkManifestTests(unittest.TestCase):
         del assets["windows-x86_64"]
         with self.assertRaises(fork_release.ForkReleaseError):
             fork_release.build_manifest("0.9.1-shuv.1", "notes", assets, checksums, 22, 1)
+
+
+
+class DiscordNotifyTests(unittest.TestCase):
+    def _run(self, *args: str) -> subprocess.CompletedProcess[str]:
+        env = {key: value for key, value in os.environ.items() if key != "DISCORD_RELEASE_WEBHOOK_URL"}
+        return subprocess.run(
+            ["bash", str(DISCORD_NOTIFY), *args],
+            env=env,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+    def test_dry_run_accepts_fork_prerelease_tags(self) -> None:
+        result = self._run(
+            "--project", "herdr",
+            "--version", "v0.9.1-shuv.3",
+            "--repo", "shuv1337/herdr",
+            "--link", "release: https://github.com/shuv1337/herdr/releases/tag/v0.9.1-shuv.3",
+            "--dry-run",
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(
+            result.stdout.splitlines(),
+            [
+                "**herdr v0.9.1-shuv.3** is out",
+                "tag: https://github.com/shuv1337/herdr/tree/v0.9.1-shuv.3",
+                "release: https://github.com/shuv1337/herdr/releases/tag/v0.9.1-shuv.3",
+            ],
+        )
+
+    def test_missing_webhook_is_a_skip_not_an_error(self) -> None:
+        result = self._run("--project", "herdr", "--version", "v0.9.1-shuv.3")
+        self.assertEqual(result.returncode, 2)
+
+    def test_rejects_malformed_versions(self) -> None:
+        for version in ("v0.9.1;id", "0.9", "v0.9.1-"):
+            with self.subTest(version=version):
+                result = self._run("--project", "herdr", "--version", version, "--dry-run")
+                self.assertEqual(result.returncode, 1)
 
 
 if __name__ == "__main__":

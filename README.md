@@ -106,7 +106,7 @@ just fork-release            # tags origin/master as the next v<version>-shuv.<N
 just fork-release --dry-run  # print the next tag without creating it
 ```
 
-the workflow builds all five platform assets and attaches them to the GitHub release, along with `latest.json` (the update manifest `herdr update` reads) and the install scripts. it does not commit anything back to `master`, so syncing upstream won't conflict with fork releases.
+the workflow builds all five platform assets and attaches them to the GitHub release, along with `latest.json` (the update manifest `herdr update` reads) and the install scripts. after publishing, it posts a short announcement to Discord through the `DISCORD_RELEASE_WEBHOOK_URL` repository secret. if the secret is missing, it skips the post; if the post fails, the release still succeeds. it does not commit anything back to `master`, so syncing upstream won't conflict with fork releases.
 
 ## license
 

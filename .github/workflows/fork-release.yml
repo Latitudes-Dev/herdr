@@ -238,3 +238,35 @@ jobs:
             distribution/install.sh \
             distribution/install.ps1 \
             distribution/install.cmd
+
+  announce-discord:
+    needs: release
+    if: github.repository == 'shuv1337/herdr' && github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    continue-on-error: true
+    permissions:
+      contents: read
+
+    steps:
+      - *require-release-admins
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        with:
+          persist-credentials: false
+
+      - name: Announce release on Discord
+        env:
+          DISCORD_RELEASE_WEBHOOK_URL: ${{ secrets.DISCORD_RELEASE_WEBHOOK_URL }}
+        run: |
+          status=0
+          bash scripts/discord_release_notify.sh \
+            --project herdr \
+            --version "$GITHUB_REF_NAME" \
+            --repo "$GITHUB_REPOSITORY" \
+            --link "release: https://github.com/${GITHUB_REPOSITORY}/releases/tag/${GITHUB_REF_NAME}" \
+            || status=$?
+          case "$status" in
+            0) ;;
+            2) echo "::notice::Discord announcement skipped: DISCORD_RELEASE_WEBHOOK_URL is not set" ;;
+            *) echo "::warning::Discord announcement failed; the release is already published" ;;
+          esac
