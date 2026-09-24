@@ -23,6 +23,7 @@ pub(crate) struct ClientShellConfig {
     pub(super) hide_tab_bar_when_single_tab: bool,
     pub(super) spaces: SpacesSidebarConfig,
     pub(super) agents: crate::config::AgentsSidebarConfig,
+    pub(super) local_label: String,
     pub(super) agent_panel_sort: crate::config::AgentPanelSortConfig,
     pub(super) status_indicators: crate::config::StatusIndicatorStyle,
     pub(super) sound_enabled: bool,
@@ -1006,6 +1007,7 @@ impl ClientShellState {
                 .or_default()
                 .extend(saved.collapsed_groups);
         }
+        let endpoints = vec![local_endpoint(&config.local_label)];
         Self {
             config,
             snapshot: None,
@@ -1046,7 +1048,7 @@ impl ClientShellState {
             last_composed_at: None,
             selection_repaint_deadline: None,
             hits: ShellHitMap::default(),
-            endpoints: vec![local_endpoint()],
+            endpoints,
             active_endpoint_id: ClientEndpointId::Local,
             collapsed_endpoints: HashSet::new(),
             mode: ClientShellMode::Terminal,

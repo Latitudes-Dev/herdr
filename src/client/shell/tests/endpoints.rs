@@ -565,6 +565,34 @@ fn sidebar_renders_local_and_saved_ssh_endpoints_with_status() {
 }
 
 #[test]
+fn local_label_updates_presentation_without_changing_endpoint_identity() {
+    let mut config = ClientShellConfig::from_config(&Config::default());
+    config.local_label = "Desktop".into();
+    let mut state = ClientShellState::new(config);
+    assert_eq!(state.endpoints[0].label, "Desktop");
+    state.set_snapshot(Box::new(snapshot()));
+    state.set_endpoint_catalog(&[remote_profile()]);
+    assert_eq!(state.endpoints[0].label, "Desktop");
+    assert_eq!(state.endpoints[0].endpoint_id, ClientEndpointId::Local);
+    assert!(state.endpoints[0].snapshot.is_some());
+
+    state.config.local_label = "Laptop".into();
+    state.refresh_local_endpoint_label();
+    assert_eq!(state.endpoints[0].label, "Laptop");
+    assert_eq!(state.endpoints[1].label, "Build");
+    assert_eq!(state.active_endpoint_id, ClientEndpointId::Local);
+    assert!(state.endpoints[0].snapshot.is_some());
+    let frame = state.compose(100, 28).expect("renamed local machine frame");
+    let text = frame
+        .cells
+        .iter()
+        .map(|cell| cell.symbol.as_str())
+        .collect::<String>();
+    assert!(text.contains("Laptop"));
+    assert!(!text.contains("Desktop"));
+}
+
+#[test]
 fn saved_machine_preserves_endpoint_scoped_worktree_collapses() {
     fn add_worktree_group(snapshot: &mut ClientShellSnapshot, parent_id: &str, child_id: &str) {
         snapshot.workspaces[0].workspace_id = parent_id.into();

@@ -351,6 +351,24 @@ The symbols are static, so this option does not enable spinner animation.
 
 ### Sidebar row layouts
 
+Name the local machine in the machine list, navigator, and agent `machine` tokens:
+
+```toml
+[ui.sidebar]
+local_label = "Desktop"
+```
+
+The default is `Local`. Use `local_label = "{hostname}"` to show the client machine's
+hostname, or include that token in a label such as `"work-{hostname}"`. For a config
+shared across machines, `HERDR_LOCAL_LABEL=Desktop herdr` overrides the configured
+label for that client process. A blank override falls back to the config; a blank
+config falls back to `Local`. Control characters are removed and labels are limited
+to 200 characters. Config edits apply through the normal client config reload.
+
+This is a display setting: saved SSH labels and machine routing stay independent.
+Sidebar token rules match the displayed label, so update rules matching `Local`
+if you customize it.
+
 The expanded desktop sidebar renders each inner array in `rows` as one line. These are the complete default layouts:
 
 ```toml

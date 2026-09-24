@@ -1055,6 +1055,12 @@
           ]
         },
         {
+          "key": "ui.sidebar.local_label",
+          "type": "string",
+          "default": "\"\"",
+          "description": "Client-local machine display label. Empty uses Local. Supports {hostname}; HERDR_LOCAL_LABEL overrides this setting when nonblank. Reloads with client configuration."
+        },
+        {
           "key": "ui.sidebar.agents.row_gap",
           "type": "integer",
           "default": "0",

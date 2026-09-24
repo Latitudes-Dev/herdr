@@ -478,13 +478,80 @@ impl Default for SpacesSidebarConfig {
 #[derive(Debug, Clone, PartialEq, Eq, Default, Deserialize, Serialize)]
 #[serde(default)]
 pub struct SidebarConfig {
+    /// Client-local display label; supports `{hostname}`. Empty means `Local`.
+    pub local_label: String,
     pub agents: AgentsSidebarConfig,
     pub spaces: SpacesSidebarConfig,
+}
+
+impl SidebarConfig {
+    pub(crate) fn resolved_local_label(&self) -> String {
+        resolve_local_label(
+            &self.local_label,
+            std::env::var("HERDR_LOCAL_LABEL").ok().as_deref(),
+            crate::platform::hostname().as_deref(),
+        )
+    }
+}
+
+fn resolve_local_label(
+    configured: &str,
+    environment: Option<&str>,
+    hostname: Option<&str>,
+) -> String {
+    environment
+        .into_iter()
+        .chain(std::iter::once(configured))
+        .find_map(|template| {
+            let expanded = template.replace("{hostname}", hostname.unwrap_or("Local"));
+            let label = expanded
+                .chars()
+                .filter(|ch| !ch.is_control())
+                .take(200)
+                .collect::<String>();
+            let label = label.trim();
+            (!label.is_empty()).then(|| label.to_owned())
+        })
+        .unwrap_or_else(|| "Local".to_owned())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn local_label_precedence_expansion_and_fallbacks() {
+        assert_eq!(resolve_local_label("", None, None), "Local");
+        assert_eq!(
+            resolve_local_label("Desktop", None, Some("host")),
+            "Desktop"
+        );
+        assert_eq!(
+            resolve_local_label("Desktop", Some("work-{hostname}"), Some("box")),
+            "work-box"
+        );
+        assert_eq!(
+            resolve_local_label("{hostname}", Some(" \n"), Some("box")),
+            "box"
+        );
+        assert_eq!(resolve_local_label("{hostname}", None, None), "Local");
+        assert_eq!(resolve_local_label(" \u{1b}\n\u{7} ", None, None), "Local");
+        assert_eq!(resolve_local_label("桌面", None, None), "桌面");
+        assert_eq!(resolve_local_label(&"x".repeat(250), None, None).len(), 200);
+    }
+
+    #[test]
+    fn local_label_config_round_trips_and_defaults_for_existing_configs() {
+        let config: crate::config::Config =
+            toml::from_str("[ui.sidebar]\nlocal_label = 'work-{hostname}'").unwrap();
+        assert_eq!(config.ui.sidebar.local_label, "work-{hostname}");
+        let encoded = toml::to_string(&config.ui.sidebar).unwrap();
+        let decoded: SidebarConfig = toml::from_str(&encoded).unwrap();
+        assert_eq!(decoded, config.ui.sidebar);
+        let existing: SidebarConfig = toml::from_str("[agents]\nrow_gap = 1").unwrap();
+        assert!(existing.local_label.is_empty());
+        assert_eq!(existing.agents.row_gap, 1);
+    }
 
     #[test]
     fn defaults_match_the_compact_agent_and_existing_space_layouts() {

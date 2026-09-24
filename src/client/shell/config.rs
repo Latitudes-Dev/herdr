@@ -77,6 +77,7 @@ impl ClientShellState {
                     &loaded.diagnostics,
                     &loaded.invalid_sections,
                 );
+                self.refresh_local_endpoint_label();
                 if let Some(appearance) = self.host_appearance {
                     self.config.palette = crate::app::client_palette_for_appearance(
                         &self.config.theme_runtime,
@@ -123,6 +124,7 @@ impl ClientShellConfig {
             hide_tab_bar_when_single_tab: config.ui.hide_tab_bar_when_single_tab,
             spaces: config.ui.sidebar.spaces.clone(),
             agents: config.ui.sidebar.agents.clone(),
+            local_label: config.ui.sidebar.resolved_local_label(),
             agent_panel_sort: config.ui.agent_panel_sort,
             status_indicators: config.ui.status_indicators,
             sound_enabled: config.ui.sound.enabled,
@@ -325,6 +327,7 @@ impl ClientShellConfig {
                 self.hide_tab_bar_when_single_tab = ui.hide_tab_bar_when_single_tab;
                 self.spaces = ui.sidebar.spaces.clone();
                 self.agents = ui.sidebar.agents.clone();
+                self.local_label = ui.sidebar.resolved_local_label();
                 self.agent_panel_sort = ui.agent_panel_sort;
                 self.status_indicators = ui.status_indicators;
                 self.sound_enabled = ui.sound.enabled;
@@ -458,12 +461,14 @@ mod tests {
         next.ui.tab_bar_position = TabBarPositionConfig::Bottom;
         next.ui.agent_panel_sort = crate::config::AgentPanelSortConfig::Priority;
         next.ui.status_indicators = crate::config::StatusIndicatorStyle::Symbols;
+        next.ui.sidebar.local_label = "Desktop".into();
         next.ui.sidebar.agents = toml::from_str("rows = [[{ token = 'machine', rules = [{ equals = 'Local', bold = true }] }]]\nrow_gap = 2").unwrap();
         next.keys.prefix = "ctrl+a".to_owned();
 
         let diagnostics = shell.apply_live_config(&next, &[], &[]);
 
         assert!(diagnostics.is_empty());
+        assert_eq!(shell.local_label, next.ui.sidebar.resolved_local_label());
         assert_eq!(shell.sidebar_width, 31);
         assert_eq!(shell.tab_bar_position, TabBarPositionConfig::Bottom);
         assert_eq!(
@@ -483,12 +488,14 @@ mod tests {
             Some(true)
         );
         let previous = shell.agents.clone();
+        let previous_label = shell.local_label.clone();
         shell.apply_live_config(
             &Config::default(),
             &[],
             &["ui".to_owned(), "keys".to_owned()],
         );
         assert_eq!(shell.agents, previous);
+        assert_eq!(shell.local_label, previous_label);
         assert_eq!(
             shell.keybinds.prefix,
             (KeyCode::Char('a'), KeyModifiers::CONTROL)
