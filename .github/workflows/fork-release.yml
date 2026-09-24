@@ -1,0 +1,240 @@
+name: Fork Release
+
+# Publishes shuv1337/herdr fork builds from `v<cargo-version>-shuv.<N>` tags.
+# The upstream Release workflow stays gated on herdrdev/herdr and skips here.
+on:
+  push:
+    tags:
+      - "v*-shuv.*"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: fork-release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+  RUST_TOOLCHAIN_VERSION: 1.96.1
+
+jobs:
+  validate:
+    if: github.repository == 'shuv1337/herdr' && github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.tag.outputs.version }}
+      revision: ${{ steps.tag.outputs.revision }}
+    steps:
+      - &require-release-admins
+        name: Require repository admins for publishing and reruns
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          for actor in "$GITHUB_ACTOR" "$GITHUB_TRIGGERING_ACTOR"; do
+            permission="$(gh api "repos/$GITHUB_REPOSITORY/collaborators/$actor/permission" --jq .permission)"
+            if [ "$permission" != "admin" ]; then
+              echo "error: $actor must have repository admin permission to publish" >&2
+              exit 1
+            fi
+          done
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Validate tag
+        id: tag
+        run: python3 scripts/fork_release.py check-tag --tag "$GITHUB_REF_NAME" --github-output "$GITHUB_OUTPUT"
+      - name: Require the tagged commit on master
+        run: |
+          git fetch origin master:refs/remotes/origin/master
+          if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/master; then
+            echo "error: $GITHUB_REF_NAME ($GITHUB_SHA) is not reachable from master" >&2
+            exit 1
+          fi
+
+  build:
+    needs: validate
+    if: github.repository == 'shuv1337/herdr'
+    permissions:
+      contents: read
+    strategy:
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-musl
+            os: ubuntu-latest
+            name: herdr-linux-x86_64
+          - target: aarch64-unknown-linux-musl
+            os: ubuntu-latest
+            name: herdr-linux-aarch64
+          - target: x86_64-apple-darwin
+            os: macos-latest
+            name: herdr-macos-x86_64
+          - target: aarch64-apple-darwin
+            os: macos-latest
+            name: herdr-macos-aarch64
+          - target: x86_64-pc-windows-msvc
+            os: windows-2022
+            name: herdr-windows-x86_64.zip
+
+    runs-on: ${{ matrix.os }}
+    env:
+      LIBGHOSTTY_VT_OPTIMIZE: ReleaseFast
+      LIBGHOSTTY_VT_SIMD: 'true'
+      HERDR_FORK_REVISION: ${{ needs.validate.outputs.revision }}
+
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        with:
+          persist-credentials: false
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # v1
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN_VERSION }}
+          targets: ${{ matrix.target }}
+
+      - name: Install Zig
+        uses: vercel-labs/setup-zig@83c1594f26b86da8a9a8ddd9b5ee5f3af0f96943 # v1.0.2
+        with:
+          version: 0.16.0
+
+      - name: Prefer official Ubuntu mirrors over Azure
+        if: runner.os == 'Linux'
+        run: |
+          if [ -f /etc/apt/apt-mirrors.txt ]; then
+            sudo sed -i '/azure.archive.ubuntu.com/d' /etc/apt/apt-mirrors.txt
+          fi
+
+      - name: Install Linux build tools
+        if: runner.os == 'Linux'
+        run: |
+          sudo find /etc/apt/sources.list.d -type f \( -iname '*microsoft*' -o -iname '*azure-cli*' \) -print -delete
+          sudo apt-get update
+          sudo apt-get install -y cmake ninja-build musl-tools gcc-aarch64-linux-gnu crossbuild-essential-arm64
+
+      - name: Install macOS build tools
+        if: runner.os == 'macOS'
+        run: HOMEBREW_NO_AUTO_UPDATE=1 brew install cmake ninja
+
+      - name: Set Linux aarch64 linker
+        if: matrix.target == 'aarch64-unknown-linux-musl'
+        run: echo "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER=aarch64-linux-gnu-gcc" >> $GITHUB_ENV
+
+      - name: Cache Rust artifacts
+        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+        with:
+          key: fork-release-${{ matrix.target }}
+
+      - name: Remove Zig caches
+        shell: bash
+        run: rm -rf .zig-cache vendor/libghostty-vt/.zig-cache vendor/libghostty-vt/zig-out
+
+      - name: Build
+        run: cargo build --release --locked --target ${{ matrix.target }}
+
+      - name: Package artifact
+        if: runner.os != 'Windows'
+        shell: bash
+        run: cp target/${{ matrix.target }}/release/herdr ${{ matrix.name }}
+
+      - name: Verify version identity
+        if: runner.os == 'Linux' && matrix.target == 'x86_64-unknown-linux-musl'
+        shell: bash
+        run: |
+          reported="$(./${{ matrix.name }} --version)"
+          echo "$reported"
+          case "$reported" in
+            "herdr ${GITHUB_REF_NAME#v}+"*|"herdr ${GITHUB_REF_NAME#v}") ;;
+            *) echo "error: binary reports '$reported', expected ${GITHUB_REF_NAME#v}" >&2; exit 1 ;;
+          esac
+
+      - name: Package artifact
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $package = Join-Path $env:RUNNER_TEMP "Microsoft.Windows.Console.ConPTY.nupkg"
+          $stage = Join-Path $env:RUNNER_TEMP "herdr-windows-x86_64"
+          .\scripts\package_windows_conpty.ps1 `
+            -HerdrExe target\${{ matrix.target }}\release\herdr.exe `
+            -PackagePath $package `
+            -StageDir $stage `
+            -OutputPath ${{ matrix.name }}
+          $version = (& (Join-Path $stage "herdr.exe") --version | Out-String).Trim()
+          $tagVersion = $env:GITHUB_REF_NAME -replace '^v', ''
+          if ($version -notmatch [regex]::Escape($tagVersion) -or $version -match "preview") {
+            throw "Packaged Windows binary has unexpected version identity: $version"
+          }
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: ${{ matrix.name }}
+          path: ${{ matrix.name }}
+
+  release:
+    needs: [validate, build]
+    if: github.repository == 'shuv1337/herdr' && github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - *require-release-admins
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          path: artifacts
+
+      - name: Write release notes
+        run: |
+          git fetch --no-tags https://github.com/herdrdev/herdr.git master:refs/remotes/upstream/master
+          python3 scripts/fork_release.py notes --tag "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --output RELEASE_NOTES.md
+          cat RELEASE_NOTES.md
+
+      - name: Write update manifest
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p previous
+          if gh release download --repo "$GITHUB_REPOSITORY" --pattern latest.json --dir previous; then
+            echo "Carrying release history forward from the previous latest.json"
+          else
+            echo "No previous fork manifest; starting release history"
+          fi
+          python3 scripts/fork_release.py manifest \
+            --tag "$GITHUB_REF_NAME" \
+            --repo "$GITHUB_REPOSITORY" \
+            --assets-dir artifacts \
+            --notes RELEASE_NOTES.md \
+            --previous previous/latest.json \
+            --output latest.json
+          cat latest.json
+
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "herdr ${GITHUB_REF_NAME#v}" \
+            --notes-file RELEASE_NOTES.md \
+            --verify-tag \
+            --latest \
+            artifacts/herdr-linux-x86_64/herdr-linux-x86_64 \
+            artifacts/herdr-linux-aarch64/herdr-linux-aarch64 \
+            artifacts/herdr-macos-x86_64/herdr-macos-x86_64 \
+            artifacts/herdr-macos-aarch64/herdr-macos-aarch64 \
+            artifacts/herdr-windows-x86_64.zip/herdr-windows-x86_64.zip \
+            latest.json \
+            distribution/install.sh \
+            distribution/install.ps1 \
+            distribution/install.cmd

@@ -2,6 +2,9 @@
 
 pub const BASE_VERSION: &str = env!("CARGO_PKG_VERSION");
 
+/// Pre-release label that marks fork builds, as in `0.9.1-shuv.3`.
+pub const FORK_RELEASE_LABEL: &str = "shuv";
+
 pub fn channel() -> &'static str {
     non_empty(option_env!("HERDR_BUILD_CHANNEL")).unwrap_or("stable")
 }
@@ -14,9 +17,17 @@ pub fn build_commit() -> Option<&'static str> {
     non_empty(option_env!("HERDR_BUILD_COMMIT"))
 }
 
+/// Fork release revision injected by the fork release workflow.
+pub fn fork_revision() -> Option<&'static str> {
+    non_empty(option_env!("HERDR_FORK_REVISION"))
+}
+
 fn channel_version() -> String {
     match channel() {
-        "stable" => BASE_VERSION.to_string(),
+        "stable" => match fork_revision() {
+            Some(revision) => format!("{BASE_VERSION}-{FORK_RELEASE_LABEL}.{revision}"),
+            None => BASE_VERSION.to_string(),
+        },
         channel => match build_id() {
             Some(build_id) => format!("{BASE_VERSION}-{channel}.{build_id}"),
             None => format!("{BASE_VERSION}-{channel}"),

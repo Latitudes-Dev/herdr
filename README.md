@@ -15,14 +15,21 @@
 
 <p align="center">
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-666666?labelColor=333333" alt="Apache 2.0 license" /></a>
-  <a href="https://github.com/herdrdev/herdr/releases"><img src="https://img.shields.io/github/downloads/herdrdev/herdr/total?labelColor=333333&color=666666" alt="total GitHub release downloads" /></a>
+  <a href="https://github.com/shuv1337/herdr/releases"><img src="https://img.shields.io/github/downloads/shuv1337/herdr/total?labelColor=333333&color=666666" alt="total GitHub release downloads" /></a>
   <a href="https://github.com/herdrdev/herdr/stargazers"><img src="https://img.shields.io/github/stars/herdrdev/herdr?labelColor=333333&color=666666&logo=github" alt="GitHub stars" /></a>
-  <a href="https://github.com/herdrdev/herdr/releases/latest"><img src="https://img.shields.io/github/v/release/herdrdev/herdr?label=release&labelColor=333333&color=666666" alt="latest stable release" /></a>
+  <a href="https://github.com/shuv1337/herdr/releases/latest"><img src="https://img.shields.io/github/v/release/shuv1337/herdr?label=fork%20release&labelColor=333333&color=666666" alt="latest stable release" /></a>
   <a href="https://formulae.brew.sh/formula/herdr"><img src="https://img.shields.io/homebrew/v/herdr?label=homebrew&labelColor=333333&color=666666" alt="Homebrew version" /></a>
   <a href="https://x.com/herdrdev"><img src="https://img.shields.io/badge/follow-%40herdrdev-000000?logo=x&logoColor=white" alt="follow @herdrdev on X" /></a>
 </p>
 
 ---
+
+> [!NOTE]
+> **This is the [shuv1337/herdr](https://github.com/shuv1337/herdr) fork of [herdrdev/herdr](https://github.com/herdrdev/herdr).**
+> It tracks upstream `master` and adds fork-only changes such as shuvcode/shuvpi integrations, native jj workspaces, custom local machine labels, and the night-owl-gold theme.
+> Each [release](https://github.com/shuv1337/herdr/releases) lists the fork's changes in its notes.
+> Fork builds are versioned `<upstream-version>-shuv.<N>` (for example `0.9.1-shuv.1`), and `herdr update` installs updates from this fork's releases, not from herdr.dev.
+> Report fork-specific problems [here](https://github.com/shuv1337/herdr/issues), not upstream.
 
 https://github.com/user-attachments/assets/043ec09f-4bdd-41d5-aee0-8fda6b83e267
 
@@ -41,11 +48,21 @@ https://github.com/user-attachments/assets/043ec09f-4bdd-41d5-aee0-8fda6b83e267
 
 ## install
 
+install the fork on linux or macos:
+
 ```bash
-curl -fsSL https://herdr.dev/install.sh | sh
+curl -fsSL https://github.com/shuv1337/herdr/releases/latest/download/install.sh | sh
 ```
 
-or `brew install herdr` · `mise use -g herdr` · windows: `powershell -ExecutionPolicy Bypass -c "irm https://herdr.dev/install.ps1 | iex"` · [endpoint-protected Windows](https://herdr.dev/docs/windows-beta/) · [binaries](https://github.com/herdrdev/herdr/releases)
+windows (powershell):
+
+```powershell
+powershell -ExecutionPolicy Bypass -c "irm https://github.com/shuv1337/herdr/releases/latest/download/install.ps1 | iex"
+```
+
+or download a binary from [releases](https://github.com/shuv1337/herdr/releases). the installer puts `herdr` in `~/.local/bin` (set `HERDR_INSTALL_DIR` to change that) and replaces any herdr already installed there. fork installs update with `herdr update`. this fork publishes stable releases only, so leave `herdr channel` set to `stable`.
+
+`brew install herdr`, `mise use -g herdr`, Nix, and `https://herdr.dev/install.sh` install **upstream** herdr without the fork's changes. to switch back to upstream, run `curl -fsSL https://herdr.dev/install.sh | sh`.
 
 then start it where the work lives:
 
@@ -72,13 +89,24 @@ if you are an ai agent helping with this repository, read [`AGENTS.md`](./AGENTS
 ## development
 
 ```bash
-git clone https://github.com/herdrdev/herdr
+git clone https://github.com/shuv1337/herdr
 cd herdr
 cargo build --release
 
 just test        # unit tests
 just check       # formatting, tests, and maintenance checks
 ```
+
+### fork releases
+
+fork releases are built by [`.github/workflows/fork-release.yml`](.github/workflows/fork-release.yml) from `v<cargo-version>-shuv.<N>` tags. to publish one, push `master`, then run:
+
+```bash
+just fork-release            # tags origin/master as the next v<version>-shuv.<N> and pushes the tag
+just fork-release --dry-run  # print the next tag without creating it
+```
+
+the workflow builds all five platform assets and attaches them to the GitHub release, along with `latest.json` (the update manifest `herdr update` reads) and the install scripts. it does not commit anything back to `master`, so syncing upstream won't conflict with fork releases.
 
 ## license
 

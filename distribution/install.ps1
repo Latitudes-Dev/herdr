@@ -780,9 +780,9 @@ if ($useLocalPackage) {
 
     if ([string]::IsNullOrWhiteSpace($ManifestUrl)) {
         $ManifestUrl = if ($Channel -eq "preview") {
-            "https://herdr.dev/preview.json"
+            "https://github.com/shuv1337/herdr/releases/latest/download/preview.json"
         } else {
-            "https://herdr.dev/latest.json"
+            "https://github.com/shuv1337/herdr/releases/latest/download/latest.json"
         }
     }
 

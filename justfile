@@ -13,7 +13,7 @@ test:
 
 # Run repository maintenance contract tests
 maintenance-test:
-    {{python}} -m unittest scripts.test_agent_detection_manifest_check scripts.test_changelog scripts.test_config_reference_check scripts.test_docs_translation_parity scripts.test_hermes_integration_asset scripts.test_package_windows_conpty scripts.test_preview scripts.test_release scripts.test_unix_installer scripts.test_vendor_libghostty_vt scripts.test_vendor_portable_pty scripts.test_windows_cross scripts.test_windows_input
+    {{python}} -m unittest scripts.test_agent_detection_manifest_check scripts.test_changelog scripts.test_config_reference_check scripts.test_docs_translation_parity scripts.test_fork_release scripts.test_hermes_integration_asset scripts.test_package_windows_conpty scripts.test_preview scripts.test_release scripts.test_unix_installer scripts.test_vendor_libghostty_vt scripts.test_vendor_portable_pty scripts.test_windows_cross scripts.test_windows_input
     bun test scripts/release-workflows.test.ts
 
 # Local interactive Windows Terminal input qualification (never runs in normal CI).
@@ -156,6 +156,10 @@ pre-release-check:
     @echo "release review required: investigate material render-scaling regressions before publishing."
     @echo "release review required: update skills/herdr/SKILL.md for this stable release so it matches the current CLI, IDs, agent lifecycle semantics, and safety guidance."
     @echo "release policy: do not update skills/herdr/SKILL.md between stable releases; preview builds keep the latest stable skill."
+
+# Tag the pushed origin/master HEAD as the next v<version>-shuv.<N> fork release.
+fork-release *args:
+    {{python}} scripts/fork_release.py tag {{args}}
 
 # Publish a preview by pushing an admin-owned tag at the selected source commit.
 preview $ref='HEAD':

@@ -99,6 +99,20 @@ fn emit_build_commit(manifest_dir: &PathBuf) {
     }
 }
 
+fn validate_fork_revision() {
+    let Ok(revision) = env::var("HERDR_FORK_REVISION") else {
+        return;
+    };
+    let revision = revision.trim();
+    if revision.is_empty() {
+        return;
+    }
+    match revision.parse::<u32>() {
+        Ok(value) if value > 0 && value.to_string() == revision => {}
+        _ => panic!("HERDR_FORK_REVISION must be a positive integer, got {revision:?}"),
+    }
+}
+
 fn main() {
     println!("cargo:rerun-if-changed=build.rs");
     println!("cargo:rerun-if-changed=vendor/libghostty-vt.vendor.json");
@@ -114,6 +128,8 @@ fn main() {
     println!("cargo:rerun-if-env-changed=HERDR_BUILD_CHANNEL");
     println!("cargo:rerun-if-env-changed=HERDR_BUILD_ID");
     println!("cargo:rerun-if-env-changed=HERDR_BUILD_COMMIT");
+    println!("cargo:rerun-if-env-changed=HERDR_FORK_REVISION");
+    validate_fork_revision();
     println!("cargo:rerun-if-env-changed=ZIG");
     println!("cargo:rerun-if-env-changed=LIBGHOSTTY_VT_WINDOWS_LIBC");
     println!(

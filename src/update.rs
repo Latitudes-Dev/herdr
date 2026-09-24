@@ -1,6 +1,6 @@
 //! Self-update mechanism.
 //!
-//! Checks the hosted herdr.dev update manifest for newer versions.
+//! Checks the hosted update manifest (the fork's GitHub releases) for newer versions.
 //! Manual `herdr update` downloads and installs the binary.
 //! Background checks only surface availability and release notes.
 //! Uses `curl` as a subprocess for HTTP — no additional Rust HTTP dependencies.
@@ -22,8 +22,10 @@ use std::time::{Duration, Instant};
 use interprocess::local_socket::traits::Stream as _;
 use serde::{Deserialize, Deserializer};
 
-const STABLE_UPDATE_MANIFEST_URL: &str = "https://herdr.dev/latest.json";
-const PREVIEW_UPDATE_MANIFEST_URL: &str = "https://herdr.dev/preview.json";
+const STABLE_UPDATE_MANIFEST_URL: &str =
+    "https://github.com/shuv1337/herdr/releases/latest/download/latest.json";
+const PREVIEW_UPDATE_MANIFEST_URL: &str =
+    "https://github.com/shuv1337/herdr/releases/latest/download/preview.json";
 const HOMEBREW_FORMULA_API_URL: &str = "https://formulae.brew.sh/api/formula/herdr.json";
 const HERDR_UPDATE_COMMAND: &str = "herdr update";
 const HOMEBREW_UPDATE_COMMAND: &str = "brew update && brew upgrade herdr";
@@ -62,36 +64,63 @@ fn fake_release_notes_body(version: &str) -> String {
 // ---------------------------------------------------------------------------
 
 /// Parsed semver version for comparison.
+///
+/// `fork` is the fork release revision from a `-shuv.N` pre-release label, so
+/// `0.9.1-shuv.2` orders above `0.9.1-shuv.1` and `0.9.1`. Other pre-release
+/// labels and build metadata are ignored.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Version {
     pub major: u32,
     pub minor: u32,
     pub patch: u32,
+    pub fork: u32,
 }
 
 impl Version {
     pub fn parse(s: &str) -> Option<Self> {
         let s = s.strip_prefix('v').unwrap_or(s);
-        let s = s.split(['-', '+']).next().unwrap_or(s);
-        let parts: Vec<&str> = s.split('.').collect();
+        let s = s.split('+').next().unwrap_or(s);
+        let (core, pre_release) = match s.split_once('-') {
+            Some((core, pre_release)) => (core, Some(pre_release)),
+            None => (s, None),
+        };
+        let parts: Vec<&str> = core.split('.').collect();
         if parts.len() != 3 {
             return None;
         }
+        let fork = match pre_release.and_then(|label| {
+            label
+                .strip_prefix(crate::build_info::FORK_RELEASE_LABEL)
+                .and_then(|rest| rest.strip_prefix('.'))
+        }) {
+            Some(revision) => revision.parse().ok()?,
+            None => 0,
+        };
         Some(Self {
             major: parts[0].parse().ok()?,
             minor: parts[1].parse().ok()?,
             patch: parts[2].parse().ok()?,
+            fork,
         })
     }
 
     pub fn current() -> Self {
-        Self::parse(crate::build_info::BASE_VERSION).expect("invalid CARGO_PKG_VERSION")
+        Self::parse(&crate::build_info::release_label()).expect("invalid CARGO_PKG_VERSION")
     }
 }
 
 impl std::fmt::Display for Version {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}.{}.{}", self.major, self.minor, self.patch)
+        write!(f, "{}.{}.{}", self.major, self.minor, self.patch)?;
+        if self.fork > 0 {
+            write!(
+                f,
+                "-{}.{}",
+                crate::build_info::FORK_RELEASE_LABEL,
+                self.fork
+            )?;
+        }
+        Ok(())
     }
 }
 
@@ -1713,8 +1742,13 @@ fn wait_for_running_server_protocol_at(
         {
             let protocol_matches =
                 expected_protocol.is_none_or(|protocol| status.protocol == Some(protocol));
-            let version_matches =
-                expected_version.is_none_or(|version| status.version.as_deref() == Some(version));
+            let version_matches = expected_version.is_none_or(|version| {
+                status
+                    .version
+                    .as_deref()
+                    .map(|running| running.split('+').next().unwrap_or(running))
+                    == Some(version)
+            });
             if protocol_matches && version_matches {
                 return Ok(());
             }
@@ -2506,7 +2540,8 @@ mod tests {
             Some(Version {
                 major: 1,
                 minor: 2,
-                patch: 3
+                patch: 3,
+                fork: 0
             })
         );
     }
@@ -2518,7 +2553,8 @@ mod tests {
             Some(Version {
                 major: 0,
                 minor: 7,
-                patch: 1
+                patch: 1,
+                fork: 0
             })
         );
         assert_eq!(
@@ -2526,7 +2562,8 @@ mod tests {
             Some(Version {
                 major: 0,
                 minor: 7,
-                patch: 1
+                patch: 1,
+                fork: 0
             })
         );
     }
@@ -2538,7 +2575,8 @@ mod tests {
             Some(Version {
                 major: 0,
                 minor: 1,
-                patch: 0
+                patch: 0,
+                fork: 0
             })
         );
     }
@@ -2548,6 +2586,48 @@ mod tests {
         assert_eq!(Version::parse("1.2"), None);
         assert_eq!(Version::parse("abc"), None);
         assert_eq!(Version::parse(""), None);
+        assert_eq!(Version::parse("0.9.1-shuv.x"), None);
+    }
+
+    #[test]
+    fn parse_version_reads_fork_revision() {
+        assert_eq!(
+            Version::parse("v0.9.1-shuv.3+abc123"),
+            Some(Version {
+                major: 0,
+                minor: 9,
+                patch: 1,
+                fork: 3
+            })
+        );
+    }
+
+    #[test]
+    fn fork_revisions_order_above_base_and_below_next_patch() {
+        let base = Version::parse("0.9.1").unwrap();
+        let first = Version::parse("0.9.1-shuv.1").unwrap();
+        let second = Version::parse("0.9.1-shuv.2").unwrap();
+        let next_patch = Version::parse("0.9.2").unwrap();
+
+        assert!(base < first);
+        assert!(first < second);
+        assert!(second < next_patch);
+        assert!(stable_channel_should_install(&second, &first, false));
+        assert!(!stable_channel_should_install(&first, &second, false));
+    }
+
+    #[test]
+    fn fork_version_display_round_trips() {
+        assert_eq!(
+            Version::parse("0.9.1-shuv.12").unwrap().to_string(),
+            "0.9.1-shuv.12"
+        );
+        assert_eq!(
+            Version::parse("0.9.1-preview.20260630")
+                .unwrap()
+                .to_string(),
+            "0.9.1"
+        );
     }
 
     #[test]
@@ -3419,6 +3499,7 @@ mod tests {
             major: 0,
             minor: 1,
             patch: 0,
+            fork: 0,
         };
         assert_eq!(v.to_string(), "0.1.0");
     }
@@ -3551,6 +3632,40 @@ mod tests {
                 .and_then(|announcement| announcement.get("id"))
                 .and_then(serde_json::Value::as_str),
             Some("root")
+        );
+    }
+
+    #[test]
+    fn update_manifest_finds_fork_release_metadata() {
+        let json = r####"{
+            "version": "0.9.1-shuv.2",
+            "protocol": 22,
+            "notes": "### Fork changes\n- Second",
+            "assets": {
+                "linux-x86_64": "https://example.com/second"
+            },
+            "releases": {
+                "0.9.1-shuv.1": {
+                    "notes": "### Fork changes\n- First"
+                }
+            }
+        }"####;
+        let manifest: UpdateManifest = serde_json::from_str(json).unwrap();
+
+        let latest = Version::parse(&manifest.version).unwrap();
+        assert_eq!(
+            manifest
+                .metadata_for_version(&latest)
+                .expect("latest metadata")
+                .notes_body(),
+            "### Fork changes\n- Second"
+        );
+        assert_eq!(
+            manifest
+                .metadata_for_version(&Version::parse("0.9.1-shuv.1").unwrap())
+                .expect("archived metadata")
+                .notes_body(),
+            "### Fork changes\n- First"
         );
     }
 
