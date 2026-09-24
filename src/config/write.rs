@@ -4,6 +4,7 @@ pub(crate) enum ConfigEdit<'a> {
     StatusIndicators(super::StatusIndicatorStyle),
     Sound(bool),
     ToastDelivery(super::ToastDelivery),
+    LocalLabel(&'a str),
 }
 
 impl ConfigEdit<'_> {
@@ -13,6 +14,7 @@ impl ConfigEdit<'_> {
             Self::StatusIndicators(_) => "status indicators",
             Self::Sound(_) => "sound setting",
             Self::ToastDelivery(_) => "toast setting",
+            Self::LocalLabel(_) => "local machine name",
         }
     }
 
@@ -41,6 +43,19 @@ impl ConfigEdit<'_> {
                 };
                 let content = super::upsert_section_value(content, "ui.toast", "delivery", value);
                 super::remove_section_key(&content, "ui.toast", "enabled")
+            }
+            Self::LocalLabel(label) => {
+                let label = label.trim();
+                if label.is_empty() {
+                    super::remove_section_key(content, "ui.sidebar", "local_label")
+                } else {
+                    super::upsert_section_value(
+                        content,
+                        "ui.sidebar",
+                        "local_label",
+                        &toml::Value::String(label.to_owned()).to_string(),
+                    )
+                }
             }
         }
     }
@@ -77,6 +92,26 @@ pub(crate) fn write_edit(edit: ConfigEdit<'_>) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn local_label_edit_writes_escaped_value_and_blank_removes_it() {
+        let existing = "[ui]\nsidebar_width = 30\n\n[ui.sidebar.agents]\nrow_gap = 1\n";
+        let written = ConfigEdit::LocalLabel(" desk \"a\" {hostname} ").apply(existing);
+        let parsed: crate::config::Config = toml::from_str(&written).unwrap();
+        assert_eq!(parsed.ui.sidebar.local_label, "desk \"a\" {hostname}");
+        assert_eq!(parsed.ui.sidebar.agents.row_gap, 1);
+        assert_eq!(parsed.ui.sidebar_width, 30);
+
+        let renamed = ConfigEdit::LocalLabel("laptop").apply(&written);
+        let parsed: crate::config::Config = toml::from_str(&renamed).unwrap();
+        assert_eq!(parsed.ui.sidebar.local_label, "laptop");
+        assert_eq!(renamed.matches("local_label").count(), 1);
+
+        let cleared = ConfigEdit::LocalLabel("  ").apply(&renamed);
+        let parsed: crate::config::Config = toml::from_str(&cleared).unwrap();
+        assert!(parsed.ui.sidebar.local_label.is_empty());
+        assert!(!cleared.contains("local_label"));
+    }
 
     #[test]
     fn update_file_at_does_not_move_a_leading_bom_into_the_file() {

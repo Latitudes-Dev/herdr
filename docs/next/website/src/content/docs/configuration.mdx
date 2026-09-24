@@ -358,6 +358,9 @@ Name the local machine in the machine list, navigator, and agent `machine` token
 local_label = "Desktop"
 ```
 
+You can also set it from **Settings → machine**, which writes this key (clearing the
+field removes it).
+
 The default is `Local`. Use `local_label = "{hostname}"` to show the client machine's
 hostname, or include that token in a label such as `"work-{hostname}"`. For a config
 shared across machines, `HERDR_LOCAL_LABEL=Desktop herdr` overrides the configured

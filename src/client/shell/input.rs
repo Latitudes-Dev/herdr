@@ -454,31 +454,32 @@ impl ClientShellState {
         {
             return true;
         }
-        matches!(
-            self.overlay.as_ref(),
-            Some(ClientShellOverlay::Rename(_))
-                | Some(ClientShellOverlay::WorktreeCreate(
-                    ClientWorktreeCreateOverlay {
-                        creating: false,
-                        ..
-                    }
-                ))
-                | Some(ClientShellOverlay::WorktreeOpen(
-                    ClientWorktreeOpenOverlay {
+        self.settings_text_input_active()
+            || matches!(
+                self.overlay.as_ref(),
+                Some(ClientShellOverlay::Rename(_))
+                    | Some(ClientShellOverlay::WorktreeCreate(
+                        ClientWorktreeCreateOverlay {
+                            creating: false,
+                            ..
+                        }
+                    ))
+                    | Some(ClientShellOverlay::WorktreeOpen(
+                        ClientWorktreeOpenOverlay {
+                            search_focused: true,
+                            opening: false,
+                            ..
+                        }
+                    ))
+                    | Some(ClientShellOverlay::Navigator(ClientNavigatorOverlay {
                         search_focused: true,
-                        opening: false,
                         ..
-                    }
-                ))
-                | Some(ClientShellOverlay::Navigator(ClientNavigatorOverlay {
-                    search_focused: true,
-                    ..
-                }))
-                | Some(ClientShellOverlay::Help(ClientHelpOverlay {
-                    search_focused: true,
-                    ..
-                }))
-        )
+                    }))
+                    | Some(ClientShellOverlay::Help(ClientHelpOverlay {
+                        search_focused: true,
+                        ..
+                    }))
+            )
     }
 
     pub(super) fn handle_modal_paste_shortcut_with(

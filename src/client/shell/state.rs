@@ -24,6 +24,7 @@ pub(crate) struct ClientShellConfig {
     pub(super) spaces: SpacesSidebarConfig,
     pub(super) agents: crate::config::AgentsSidebarConfig,
     pub(super) local_label: String,
+    pub(super) local_label_setting: String,
     pub(super) agent_panel_sort: crate::config::AgentPanelSortConfig,
     pub(super) status_indicators: crate::config::StatusIndicatorStyle,
     pub(super) sound_enabled: bool,
@@ -389,6 +390,7 @@ pub(super) enum ClientSettingsSection {
     Sound,
     Toast,
     Integrations,
+    Machine,
 }
 
 impl ClientSettingsSection {
@@ -398,6 +400,7 @@ impl ClientSettingsSection {
         Self::Sound,
         Self::Toast,
         Self::Integrations,
+        Self::Machine,
     ];
 
     pub(super) fn label(self) -> &'static str {
@@ -407,6 +410,7 @@ impl ClientSettingsSection {
             Self::Sound => "sound",
             Self::Toast => "toasts",
             Self::Integrations => "integrations",
+            Self::Machine => "machine",
         }
     }
 }
@@ -421,6 +425,9 @@ pub(super) struct ClientSettingsOverlay {
     pub(super) integration_messages: Vec<String>,
     pub(super) loading_integrations: bool,
     pub(super) installing_integrations: bool,
+    pub(super) local_label: TextEditor,
+    pub(super) local_label_override: Option<String>,
+    pub(super) hostname: Option<String>,
 }
 
 #[derive(Debug)]

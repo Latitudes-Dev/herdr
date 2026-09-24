@@ -42,7 +42,32 @@ impl ClientShellState {
             integration_messages: Vec::new(),
             loading_integrations: false,
             installing_integrations: false,
+            local_label: TextEditor::new(&self.config.local_label_setting, false),
+            local_label_override: crate::config::local_label_override(),
+            hostname: crate::platform::hostname(),
         }));
+    }
+
+    pub(super) fn settings_text_input_active(&self) -> bool {
+        matches!(
+            self.overlay,
+            Some(ClientShellOverlay::Settings(ClientSettingsOverlay {
+                section: ClientSettingsSection::Machine,
+                ..
+            }))
+        )
+    }
+
+    pub(super) fn insert_settings_text(&mut self, text: &str) -> bool {
+        match self.overlay.as_mut() {
+            Some(ClientShellOverlay::Settings(settings))
+                if settings.section == ClientSettingsSection::Machine =>
+            {
+                settings.local_label.insert(text);
+                true
+            }
+            _ => false,
+        }
     }
 
     fn selected_index_for_settings_section(&self, section: ClientSettingsSection) -> usize {
@@ -51,7 +76,7 @@ impl ClientShellState {
             ClientSettingsSection::Indicators => indicator_index(self.config.status_indicators),
             ClientSettingsSection::Sound => usize::from(!self.config.sound_enabled),
             ClientSettingsSection::Toast => toast_index(self.config.toast_delivery),
-            ClientSettingsSection::Integrations => 0,
+            ClientSettingsSection::Integrations | ClientSettingsSection::Machine => 0,
         }
     }
 
@@ -100,6 +125,7 @@ impl ClientShellState {
                 ClientSettingsSection::Indicators | ClientSettingsSection::Sound => 2,
                 ClientSettingsSection::Toast => 4,
                 ClientSettingsSection::Integrations => settings.integrations.len(),
+                ClientSettingsSection::Machine => 0,
             },
             _ => 0,
         }
@@ -223,6 +249,14 @@ impl ClientShellState {
                 );
             }
             ClientSettingsSection::Integrations => self.install_recommended_integrations(outcome),
+            ClientSettingsSection::Machine => {
+                let label = settings.local_label.trim().to_owned();
+                if self.save_settings_edit(crate::config::ConfigEdit::LocalLabel(&label), outcome) {
+                    if let Some(ClientShellOverlay::Settings(settings)) = self.overlay.as_mut() {
+                        settings.local_label.trim_and_accept();
+                    }
+                }
+            }
         }
     }
 
@@ -366,6 +400,20 @@ impl ClientShellState {
             ) {
                 self.cancel_settings_overlay();
                 outcome.repaint = true;
+            }
+            return true;
+        }
+        if self.settings_text_input_active() {
+            if code == KeyCode::Tab && modifiers.is_empty() {
+                self.move_settings_section(1, outcome);
+            } else if code == KeyCode::BackTab
+                && modifiers.difference(KeyModifiers::SHIFT).is_empty()
+            {
+                self.move_settings_section(-1, outcome);
+            } else if code == KeyCode::Enter && modifiers.is_empty() {
+                self.apply_settings_choice(outcome);
+            } else if let Some(ClientShellOverlay::Settings(settings)) = self.overlay.as_mut() {
+                outcome.repaint |= settings.local_label.handle_key(key).is_some();
             }
             return true;
         }

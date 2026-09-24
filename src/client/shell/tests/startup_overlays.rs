@@ -1294,3 +1294,69 @@ fn client_settings_preview_restore_and_endpoint_integrations_are_owned_by_overla
         })) if integration_messages == &["installed codex"]
     ));
 }
+
+#[test]
+fn machine_settings_section_edits_local_label_without_vim_navigation() {
+    let mut config = ClientShellConfig::from_config(&Config::default());
+    config.local_label_setting = "desk".into();
+    let mut state = ClientShellState::new(config);
+    state.set_snapshot(Box::new(snapshot()));
+    state.set_pane_surface(surface());
+    state.open_settings_overlay();
+    let mut outcome = ClientShellInput::default();
+    state.select_settings_section(ClientSettingsSection::Machine, &mut outcome);
+    assert!(outcome.actions.is_empty());
+    assert!(state.settings_text_input_active());
+    assert!(state.modal_paste_target_active());
+
+    state.handle_input_bytes(b"\x1b[D");
+    state.handle_input_bytes(b"hjkl");
+    state.handle_input_bytes(b"\x1b[C");
+    assert!(state.insert_overlay_text("-{hostname}"));
+    let Some(ClientShellOverlay::Settings(settings)) = state.overlay.as_mut() else {
+        panic!("settings overlay");
+    };
+    assert_eq!(settings.section, ClientSettingsSection::Machine);
+    assert_eq!(settings.local_label.as_str(), "deshjklk-{hostname}");
+    settings.hostname = Some("box".into());
+    settings.local_label_override = None;
+
+    let frame = state.compose(106, 30).expect("machine settings");
+    let rows = frame_rows(&frame).join("\n");
+    assert!(rows.contains(" machine "), "{rows}");
+    assert!(rows.contains("local machine name"), "{rows}");
+    assert!(rows.contains("shows as: deshjklk-box"), "{rows}");
+    assert!(frame.cursor.is_some_and(|cursor| cursor.visible));
+
+    state.handle_input_bytes(b"\t");
+    assert!(matches!(
+        &state.overlay,
+        Some(ClientShellOverlay::Settings(settings))
+            if settings.section == ClientSettingsSection::Theme
+    ));
+    assert!(!state.settings_text_input_active());
+    state.handle_input_bytes(b"\x1b");
+    assert!(state.overlay.is_none());
+}
+
+#[test]
+fn machine_settings_blank_label_previews_local_and_warns_about_env_override() {
+    let mut state = ClientShellState::new(ClientShellConfig::from_config(&Config::default()));
+    state.set_snapshot(Box::new(snapshot()));
+    state.set_pane_surface(surface());
+    state.open_settings_overlay();
+    let mut outcome = ClientShellInput::default();
+    state.select_settings_section(ClientSettingsSection::Machine, &mut outcome);
+    let Some(ClientShellOverlay::Settings(settings)) = state.overlay.as_mut() else {
+        panic!("settings overlay");
+    };
+    settings.local_label = TextEditor::default();
+    settings.local_label_override = Some("laptop".into());
+
+    let rows = frame_rows(&state.compose(106, 30).expect("machine settings")).join("\n");
+    assert!(rows.contains("shows as: Local"), "{rows}");
+    assert!(
+        rows.contains("HERDR_LOCAL_LABEL=laptop overrides this in the current client"),
+        "{rows}"
+    );
+}

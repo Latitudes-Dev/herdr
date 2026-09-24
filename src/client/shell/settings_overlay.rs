@@ -127,6 +127,7 @@ pub(super) fn render_settings_overlay(
         inner.height.saturating_sub(7),
     );
     let mut choice_hits = Vec::new();
+    let mut cursor = None;
     match settings.section {
         ClientSettingsSection::Theme => {
             let visible = usize::from(content.height);
@@ -197,6 +198,9 @@ pub(super) fn render_settings_overlay(
         ClientSettingsSection::Integrations => {
             render_integrations(buffer, content, settings, palette);
         }
+        ClientSettingsSection::Machine => {
+            cursor = render_machine(buffer, content, settings, palette);
+        }
     }
 
     let installable = settings
@@ -239,7 +243,11 @@ pub(super) fn render_settings_overlay(
         inner.x,
         inner.bottom().saturating_sub(2),
         inner.width,
-        " ↑↓ select  tab section",
+        if settings.section == ClientSettingsSection::Machine {
+            " type a name  tab section"
+        } else {
+            " ↑↓ select  tab section"
+        },
         Style::default().fg(palette.overlay1).bg(palette.panel_bg),
     );
 
@@ -250,6 +258,7 @@ pub(super) fn render_settings_overlay(
         settings_popup: popup,
         settings_tabs: tab_hits,
         settings_choices: choice_hits,
+        cursor,
         ..OverlayRender::default()
     })
 }
@@ -412,4 +421,91 @@ fn render_integrations(
             Style::default().fg(palette.overlay1).bg(palette.panel_bg),
         );
     }
+}
+
+fn render_machine(
+    buffer: &mut Buffer,
+    area: Rect,
+    settings: &ClientSettingsOverlay,
+    palette: &Palette,
+) -> Option<crate::protocol::CursorState> {
+    let muted = Style::default().fg(palette.overlay1).bg(palette.panel_bg);
+    put_text(
+        buffer,
+        area.x,
+        area.y,
+        area.width,
+        "local machine name",
+        Style::default()
+            .fg(palette.text)
+            .bg(palette.panel_bg)
+            .add_modifier(Modifier::BOLD),
+    );
+    put_text(
+        buffer,
+        area.x,
+        area.y + 1,
+        area.width,
+        "shown in the machine list, navigator, and agent rows",
+        muted,
+    );
+    let field = Rect::new(area.x, area.y + 3, area.width, 1);
+    if field.y >= area.bottom() {
+        return None;
+    }
+    let field_style = Style::default().fg(palette.text).bg(palette.surface0);
+    buffer.set_style(field, field_style);
+    put_text(buffer, field.x, field.y, 3, " › ", field_style);
+    let cursor = text_editor::render(
+        buffer,
+        Rect::new(
+            field.x.saturating_add(3),
+            field.y,
+            field.width.saturating_sub(4),
+            1,
+        ),
+        &settings.local_label,
+        field_style,
+    );
+    if settings.local_label.is_empty() {
+        put_text(
+            buffer,
+            field.x.saturating_add(3),
+            field.y,
+            field.width.saturating_sub(4),
+            "Local",
+            Style::default().fg(palette.overlay0).bg(palette.surface0),
+        );
+    }
+
+    let preview = crate::config::resolve_local_label(
+        &settings.local_label,
+        None,
+        settings.hostname.as_deref(),
+    );
+    let lines = [
+        format!("shows as: {preview}"),
+        "{hostname} inserts this machine's hostname; leave blank for Local".to_owned(),
+    ];
+    for (offset, line) in lines.iter().enumerate() {
+        let y = field.y + 2 + offset as u16;
+        if y >= area.bottom() {
+            break;
+        }
+        put_text(buffer, area.x, y, area.width, line, muted);
+    }
+    if let Some(value) = settings.local_label_override.as_deref() {
+        let y = field.y + 5;
+        if y < area.bottom() {
+            put_text(
+                buffer,
+                area.x,
+                y,
+                area.width,
+                &format!("HERDR_LOCAL_LABEL={value} overrides this in the current client"),
+                Style::default().fg(palette.yellow).bg(palette.panel_bg),
+            );
+        }
+    }
+    cursor
 }

@@ -488,13 +488,20 @@ impl SidebarConfig {
     pub(crate) fn resolved_local_label(&self) -> String {
         resolve_local_label(
             &self.local_label,
-            std::env::var("HERDR_LOCAL_LABEL").ok().as_deref(),
+            local_label_override().as_deref(),
             crate::platform::hostname().as_deref(),
         )
     }
 }
 
-fn resolve_local_label(
+/// Nonblank `HERDR_LOCAL_LABEL` value, which takes precedence over the config.
+pub(crate) fn local_label_override() -> Option<String> {
+    std::env::var("HERDR_LOCAL_LABEL")
+        .ok()
+        .filter(|value| !value.trim().is_empty())
+}
+
+pub(crate) fn resolve_local_label(
     configured: &str,
     environment: Option<&str>,
     hostname: Option<&str>,
